@@ -139,7 +139,9 @@ impl Session {
         t
     }
 
-    /// Give `t` the persistent options stored for it in `prefs`.
+    /// Give `t` the persistent options stored for it in `prefs`, and those it borrows from
+    /// another tool's store ([`settings::BORROWS`]: the Pencil's Smooth strokes take the Smooth
+    /// tool's Fidelity).
     fn restore_tool_settings(prefs: &Prefs, t: &mut dyn Tool) {
         for (store, keys) in settings::stores(t.id()) {
             let Some(saved) = prefs.tool_settings.get(store) else { continue };
@@ -147,6 +149,13 @@ impl Session {
                 if let Some(v) = saved.get(*k) {
                     t.set_option(k, v);
                 }
+            }
+        }
+        for (tool, store, key, opt) in settings::BORROWS {
+            if *tool == t.id()
+                && let Some(v) = prefs.tool_settings.get(*store).and_then(|s| s.get(*key))
+            {
+                t.set_option(opt, v);
             }
         }
     }

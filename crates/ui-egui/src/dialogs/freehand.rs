@@ -4,7 +4,8 @@
 //!
 //! Fields: `tool`; `fidelity` (points; Pencil, Paintbrush and Smooth), `fill` (Pencil and
 //! Paintbrush), `closeWithin` and `editWithin` (screen pixels, 0 turns it off; Pencil and
-//! Paintbrush) and `size` (points; Blob Brush and Eraser).
+//! Paintbrush), `altSmooth` (Alt key toggles to Smooth Tool; Pencil) and `size` (points; Blob
+//! Brush and Eraser).
 
 use serde_json::{Map, Value, json};
 
@@ -23,7 +24,7 @@ pub(super) const SPEC: DialogSpec = DialogSpec { heading, body, confirm, min_wid
 pub const TOOLS: [&str; 5] = ["pencil", "paintbrush", "smooth", "blobBrush", "eraser"];
 
 /// The options the dialog edits, in the order it shows them (a tool has those it reports).
-const KEYS: [&str; 5] = ["fidelity", "size", "fill", "closeWithin", "editWithin"];
+const KEYS: [&str; 6] = ["fidelity", "size", "fill", "closeWithin", "editWithin", "altSmooth"];
 
 /// Width of the label column: wide enough for the tolerances' labels when there are any.
 fn label_w(d: &Dialog) -> f32 {
@@ -106,6 +107,10 @@ fn body(_app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     if d.fields.contains_key("editWithin") {
         number(ui, d, ("editWithin", tl!("Edit selected paths within:")), "px", 0, (0.0, 100.0));
     }
+    if d.fields.contains_key("altSmooth") {
+        ui.add_space(6.0);
+        check(ui, d, "altSmooth", tl!("Alt key toggles to Smooth Tool"));
+    }
     false
 }
 
@@ -145,27 +150,32 @@ mod tests {
             "Fill new strokes",
             "Close paths when ends are within:",
             "Edit selected paths within:",
+            "Alt key toggles to Smooth Tool",
         ] {
             assert!(text.contains(label), "{label} in {text}");
         }
         assert!(!text.contains("Size:"), "{text}");
         let d = app.ui.dialog.as_mut().unwrap();
         assert_eq!((d.f64("fidelity", 0.0), d.bool("fill"), d.f64("closeWithin", 0.0), d.f64("editWithin", 0.0)), (1.5, false, 15.0, 12.0));
-        for (k, v) in [("fidelity", json!(6.5)), ("fill", json!(true)), ("closeWithin", json!(0)), ("editWithin", json!(20))] {
+        assert!(d.bool("altSmooth"), "on by default");
+        for (k, v) in
+            [("fidelity", json!(6.5)), ("fill", json!(true)), ("closeWithin", json!(0)), ("editWithin", json!(20)), ("altSmooth", json!(false))]
+        {
             d.fields.insert(k.into(), v);
         }
         super::super::confirm(&mut app).unwrap();
         assert!(app.ui.dialog.is_none());
         let o = app.session.tool_options_of("pencil");
         assert_eq!(
-            (o["fidelity"].as_f64(), o["fill"].as_bool(), o["closeWithin"].as_f64(), o["editWithin"].as_f64()),
-            (Some(6.5), Some(true), Some(0.0), Some(20.0))
+            (o["fidelity"].as_f64(), o["fill"].as_bool(), o["closeWithin"].as_f64(), o["editWithin"].as_f64(), o["altSmooth"].as_bool()),
+            (Some(6.5), Some(true), Some(0.0), Some(20.0), Some(false))
         );
-        // The Paintbrush keeps its own: the Pencil's change left it alone.
+        // The Paintbrush keeps its own: the Pencil's change left it alone; it has no Alt option.
         app.run("tool.options", json!({"tool": "paintbrush"})).unwrap();
         let d = app.ui.dialog.as_ref().unwrap();
         assert_eq!((d.f64("fidelity", 0.0), d.bool("fill")), (1.5, false));
-        assert!(painted(&mut app).contains("Paintbrush Tool Options"));
+        let text = painted(&mut app);
+        assert!(text.contains("Paintbrush Tool Options") && !text.contains("Alt key toggles"), "{text}");
         // Smooth has Fidelity only, the Blob Brush and the Eraser Size only.
         app.run("tool.options", json!({"tool": "smooth"})).unwrap();
         let text = painted(&mut app);

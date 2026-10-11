@@ -132,6 +132,9 @@ pub struct DirectSelectionTool {
     /// Group Selection's Shift-press on a selected object: released without a drag, it leaves
     /// the selection.
     deselect: Option<NodeId>,
+    /// Alt as of the last pointer event: while it is held, each tool acts as the other
+    /// ([`Self::acts_as_group`]).
+    alt_held: bool,
 }
 
 impl DirectSelectionTool {
@@ -149,8 +152,28 @@ impl DirectSelectionTool {
             hover: None,
             guide: GuideEdit::default(),
             deselect: None,
+            alt_held: false,
         }
     }
+
+    /// Does the tool act as Group Selection with Alt held or not (`alt`)? Alt switches between
+    /// Direct Selection and Group Selection (the shortcut reference, "Work with selections"). The
+    /// widgets the canvas draws for one tool (Live Corners, type-on-a-path brackets, type frames)
+    /// stay the tool's own, Alt or not: a hit there must match what is drawn.
+    fn acts_as_group(&self, alt: bool) -> bool {
+        self.group != alt
+    }
+}
+
+/// The groups enclosing an object that Group Selection climbs, innermost first, from its
+/// `ancestry` (layer first, the object itself left out): the groups below the layers (`layers` of
+/// them lead the ancestry), and inside isolation mode or an envelope whose contents are edited
+/// (`contents_of`), only those inside that container (what [`vectorcraft_doc::hit::Hit::top_object`]
+/// stops at).
+fn group_chain(cx: &ToolContext, ancestry: &[NodeId], layers: usize, contents_of: Option<NodeId>) -> Vec<NodeId> {
+    let at = |s: Option<NodeId>| s.and_then(|s| ancestry.iter().position(|x| *x == s));
+    let start = at(cx.isolation).max(at(contents_of)).map_or(layers.max(1), |i| i + 1);
+    ancestry.get(start..).unwrap_or_default().iter().rev().copied().collect()
 }
 
 /// The spines of the editable blends, topmost first: (blend, spine).
@@ -314,31 +337,40 @@ impl Tool for DirectSelectionTool {
             return out;
         }
         let p = ev.pos;
+        self.alt_held = ev.mods.alt;
+        let group = self.acts_as_group(ev.mods.alt);
+        if ev.kind == PointerKind::Down {
+            // A Shift-press's pending deselection dies with a release that never came.
+            self.deselect = None;
+        }
         // Anchors and handle ends are picked from a little further than segments and objects.
         let (tol, point) = (cx.pick_tol(), cx.point_tol());
         match (ev.kind, self.state.clone()) {
-            // Alt switches between the two tools (the shortcut reference, "Work with selections"):
-            // Group Selection with Alt presses as Direct Selection, below.
-            (PointerKind::Down, _) if self.group && !ev.mods.alt => {
+            // The Group Selection tool itself; Direct Selection with Alt presses as it below, once
+            // the handles and widgets it shows have had their chance.
+            (PointerKind::Down, _) if self.group && group => {
                 if let Some(out) = self.guide.press(cx, ev) {
                     self.state = State::Idle;
                     return out;
                 }
                 self.press_group(cx, ev, None)
             }
-            (PointerKind::DoubleClick, _) if !self.group => corners::double_click(cx, p, true).into_iter().collect(),
+            (PointerKind::DoubleClick, _) if !group => corners::double_click(cx, p, true).into_iter().collect(),
             (PointerKind::Move, State::Idle) => {
-                self.hover = if self.group || !cx.highlight_anchors { None } else { hovered_anchor(cx, p) };
+                self.hover = if group || !cx.highlight_anchors { None } else { hovered_anchor(cx, p) };
                 vec![]
             }
             (PointerKind::Down, _) => {
-                if let Some(c) = CornerDrag::hit(cx, ev, true) {
-                    self.state = State::Corner(c);
-                    return vec![];
-                }
-                if let Some(b) = BracketDrag::hit(cx, ev) {
-                    self.state = State::Bracket(b);
-                    return vec![];
+                // The widgets the canvas draws for Direct Selection only.
+                if !self.group {
+                    if let Some(c) = CornerDrag::hit(cx, ev, true) {
+                        self.state = State::Corner(c);
+                        return vec![];
+                    }
+                    if let Some(b) = BracketDrag::hit(cx, ev) {
+                        self.state = State::Bracket(b);
+                        return vec![];
+                    }
                 }
                 if let Some(sel) = self.spine.filter(|(id, _)| cx.selection.contains(*id))
                     && let Some(out) = hit_spine_handle(cx, sel, p, point)
@@ -364,12 +396,11 @@ impl Tool for DirectSelectionTool {
                 }
                 // Direct Selection with Alt presses as Group Selection: the whole path by this
                 // anchor (an Alt-drag copies it), then its groups.
-                let as_group = !self.group && ev.mods.alt;
                 if let Some((id, si, ai, grab)) = hit_anchor(cx, p, point) {
                     if cx.doc.node(id).is_some_and(is_area_type) {
                         return self.press_type_area(cx, id, vec![(si, ai)], p, ev.mods.shift);
                     }
-                    if as_group {
+                    if group {
                         return self.press_group(cx, ev, Some((id, grab)));
                     }
                     // A path with all its anchors selected is stored whole (no partial entry).
@@ -396,7 +427,7 @@ impl Tool for DirectSelectionTool {
                     self.state = State::Idle;
                     return out;
                 }
-                if as_group {
+                if group {
                     return self.press_group(cx, ev, None);
                 }
                 if let Some(h) = hit_test(cx.doc, p, cx.hit_options()) {
@@ -412,9 +443,9 @@ impl Tool for DirectSelectionTool {
                     {
                         let selected = whole || cx.selection.partial(h.leaf).is_some_and(|sel| s.anchors.iter().all(|&ai| sel.contains(&(s.si, ai))));
                         let anchors: Vec<Value> = s.anchors.iter().map(|ai| json!([s.si, ai])).collect();
+                        let items = json!([{"id": h.leaf.0, "anchors": anchors}]);
                         if ev.mods.shift && selected {
                             self.state = State::Idle;
-                            let items = json!([{"id": h.leaf.0, "anchors": anchors}]);
                             return vec![Action::Exec("select.anchorsMany".into(), json!({"items": items, "mode": "toggle"}))];
                         }
                         self.state = if s.curved {
@@ -426,7 +457,6 @@ impl Tool for DirectSelectionTool {
                             return vec![];
                         }
                         if ev.mods.shift {
-                            let items = json!([{"id": h.leaf.0, "anchors": anchors}]);
                             return vec![Action::Exec("select.anchorsMany".into(), json!({"items": items, "mode": "add"}))];
                         }
                         return vec![Action::Exec("select.anchors".into(), json!({"id": h.leaf.0, "anchors": anchors, "mode": "set"}))];
@@ -642,6 +672,7 @@ impl Tool for DirectSelectionTool {
             _ => {
                 let mut out = self.spine_overlays(cx);
                 out.extend(self.mesh.overlays(cx));
+                // Direct Selection's own widgets, Alt or not (its Alt-presses leave them be too).
                 if !self.group {
                     out.extend(frame_overlays(cx));
                     out.extend(pathtype::overlays(cx));
@@ -649,7 +680,8 @@ impl Tool for DirectSelectionTool {
                 if matches!(self.state, State::Handle { .. } | State::MoveAnchors { .. } | State::MoveObject { .. }) {
                     out.extend(self.guides.iter().cloned());
                 }
-                if let Some((id, p)) = self.hover.filter(|_| matches!(self.state, State::Idle)) {
+                // The anchor highlight is Direct Selection's, which Alt turns off with the tool.
+                if let Some((id, p)) = self.hover.filter(|_| matches!(self.state, State::Idle) && !self.acts_as_group(self.alt_held)) {
                     out.push(Overlay::Anchor { p, color: cx.doc.layer_color(id), filled: false, size: 8.0 });
                 }
                 out.extend(self.guide.overlays(cx));
@@ -657,15 +689,18 @@ impl Tool for DirectSelectionTool {
             }
         }
     }
-    fn cursor(&self, cx: &ToolContext, p: Point, _m: Mods) -> Cursor {
+    fn cursor(&self, cx: &ToolContext, p: Point, m: Mods) -> Cursor {
+        // Direct Selection's own widgets, Alt or not.
         if !self.group && (matches!(self.state, State::Corner(_)) || over_widget(cx, p, true)) {
             return Cursor::CornerRadius;
         }
         if !self.group && (matches!(self.state, State::Bracket(_)) || over_bracket(cx, p)) {
             return Cursor::PathBracket;
         }
-        // A press on the highlighted anchor picks it, not the guide.
-        self.guide.cursor(cx, p).filter(|_| self.hover.is_none() || self.guide.busy()).unwrap_or(Cursor::ArrowHollow)
+        // A press on the highlighted anchor picks it, not the guide; as Group Selection, the
+        // press takes the guide.
+        let anchor = self.hover.is_some() && !self.acts_as_group(m.alt);
+        self.guide.cursor(cx, p).filter(|_| !anchor || self.guide.busy()).unwrap_or(Cursor::ArrowHollow)
     }
 }
 
@@ -701,21 +736,23 @@ impl DirectSelectionTool {
     /// is, which the drag snaps by (an Alt-drag copies it).
     fn press_group(&mut self, cx: &ToolContext, ev: &PointerEvent, by_anchor: Option<(NodeId, Point)>) -> Vec<Action> {
         let p = ev.pos;
-        self.deselect = None;
-        // The object and the groups enclosing it, innermost first (layers aren't objects).
+        // The object and the groups enclosing it, innermost first ([`group_chain`]: layers aren't
+        // objects, and isolation mode locks out the groups outside the isolated container).
         let (leaf, groups, grab) = match by_anchor {
             Some((id, grab)) => {
-                let ancestry = cx.doc.ancestry(id).unwrap_or_default();
-                let groups: Vec<NodeId> = ancestry.iter().rev().skip(1).copied().filter(|a| cx.doc.node(*a).is_some_and(|n| !n.is_layer())).collect();
-                (id, groups, Some(grab))
+                let mut ancestry = cx.doc.ancestry(id).unwrap_or_default();
+                ancestry.pop();
+                let node_is = |a: &NodeId, f: fn(&Node) -> bool| cx.doc.node(*a).is_some_and(f);
+                let layers = ancestry.iter().take_while(|a| node_is(a, Node::is_layer)).count();
+                let contents_of = ancestry.iter().rev().copied().find(|a| node_is(a, |n| matches!(n.kind, NodeKind::Envelope { editing: true, .. })));
+                (id, group_chain(cx, &ancestry, layers, contents_of), Some(grab))
             }
             None => {
                 let Some(h) = hit_test(cx.doc, p, cx.hit_options()) else {
                     self.state = State::Marquee { start: p, cur: p, toggle: ev.mods.shift };
                     return vec![];
                 };
-                let groups: Vec<NodeId> = h.ancestry.iter().skip(h.layers.max(1)).rev().copied().collect();
-                (h.leaf, groups, None)
+                (h.leaf, group_chain(cx, &h.ancestry, h.layers, h.contents_of), None)
             }
         };
         self.state = State::MoveObject { start: p, grab, began: false };
@@ -1300,6 +1337,112 @@ mod tests {
         let child = std::sync::Arc::new(vectorcraft_doc::Node::path(sq, r, vectorcraft_doc::Appearance::default_art()));
         d.insert(Some(l), 1, vectorcraft_doc::Node::group(g, vec![child])).unwrap();
         (d, sq, g)
+    }
+
+    /// [`grouped_square`] with the group inside another: (doc, square, group, outer group).
+    fn nested_square() -> (vectorcraft_doc::Document, NodeId, NodeId, NodeId) {
+        let (mut d, _) = doc_with_rect();
+        let l = d.layers[0].id;
+        let (sq, g, g2) = (d.alloc_id(), d.alloc_id(), d.alloc_id());
+        let r = vectorcraft_geom::shapes::rectangle(Rect::new(300.0, 300.0, 400.0, 400.0));
+        let child = std::sync::Arc::new(vectorcraft_doc::Node::path(sq, r, vectorcraft_doc::Appearance::default_art()));
+        let inner = std::sync::Arc::new(vectorcraft_doc::Node::group(g, vec![child]));
+        d.insert(Some(l), 1, vectorcraft_doc::Node::group(g2, vec![inner])).unwrap();
+        (d, sq, g, g2)
+    }
+
+    /// Group Selection's climb stops at the isolated container: inside isolation mode the groups
+    /// outside it are locked (helpx, "Isolate objects"), so a click on the square selected whole
+    /// adds nothing when its group is isolated, and its group but not the outer one when that is;
+    /// by an anchor (Direct Selection with Alt) and by the fill alike.
+    #[test]
+    fn group_selection_stops_at_the_isolated_container() {
+        let (d, sq, g, g2) = nested_square();
+        let p = paint();
+        let alt = Mods { alt: true, ..Default::default() };
+        let mut whole = Selection::default();
+        whole.set([sq]);
+        let mut both = Selection::default();
+        both.set([sq, g]);
+        let press = |isolation: Option<NodeId>, s: &Selection, x: f64, y: f64| {
+            let c = ToolContext { isolation, ..cx(&d, s, &p) };
+            DirectSelectionTool::new(false).pointer(&c, &PointerEvent::new(PointerKind::Down, x, y).with_mods(alt))
+        };
+        let add = |id: NodeId| vec![Action::Exec("select.add".into(), json!({"ids": [id.0]}))];
+        for (x, y) in [(300.0, 300.0), (350.0, 350.0)] {
+            assert_eq!(press(None, &whole, x, y), add(g), "no isolation: the group ({x}, {y})");
+            assert_eq!(press(None, &both, x, y), add(g2), "then the outer group");
+            assert_eq!(press(Some(g), &whole, x, y), vec![], "the group isolated: nothing above the square");
+            assert_eq!(press(Some(g2), &whole, x, y), add(g), "the outer group isolated: the inner one");
+            assert_eq!(press(Some(g2), &both, x, y), vec![], "and nothing above it");
+        }
+    }
+
+    /// Group Selection with Alt (Direct Selection's gesture) leaves the Live Corners widgets to
+    /// Direct Selection, the tool the canvas draws them for: an Alt-press where a widget would be
+    /// grabs the object, not an invisible widget; Direct Selection's does drag the widget.
+    #[test]
+    fn group_selection_with_alt_leaves_the_live_corners_widgets_alone() {
+        let (d, id) = doc_with_rect();
+        let p = paint();
+        let mut s = Selection::default();
+        s.set([id]);
+        let c = cx(&d, &s, &p);
+        let alt = Mods { alt: true, ..Default::default() };
+        assert!(over_widget(&c, Point::new(110.0, 110.0), true), "a widget sits in the corner for Direct Selection");
+        let mut gs = DirectSelectionTool::new(true);
+        assert_eq!(gs.pointer(&c, &PointerEvent::new(PointerKind::Down, 110.0, 110.0).with_mods(alt)), vec![]);
+        let a = gs.pointer(&c, &PointerEvent::new(PointerKind::Drag, 130.0, 110.0).with_mods(alt));
+        assert!(matches!(a.as_slice(), [Action::Begin(_), Action::Preview(c, _)] if c == "object.transform"), "{a:?}");
+        let mut ds = DirectSelectionTool::new(false);
+        ds.pointer(&c, &PointerEvent::new(PointerKind::Down, 110.0, 110.0).with_mods(alt));
+        let a = ds.pointer(&c, &PointerEvent::new(PointerKind::Drag, 120.0, 120.0).with_mods(alt));
+        assert_eq!(a.first(), Some(&Action::Begin("Corner Radius".into())), "{a:?}");
+    }
+
+    /// A Shift-press's pending deselection is dropped by the next press: a release that never
+    /// arrived (the pointer left) doesn't make a later click deselect.
+    #[test]
+    fn a_lost_release_drops_the_pending_deselection() {
+        let (d, sq, _) = grouped_square();
+        let p = paint();
+        let shift = Mods { shift: true, ..Default::default() };
+        let mut s = Selection::default();
+        s.set([sq]);
+        let c = cx(&d, &s, &p);
+        let mut t = DirectSelectionTool::new(true);
+        assert_eq!(t.pointer(&c, &PointerEvent::new(PointerKind::Down, 350.0, 350.0).with_mods(shift)), vec![]);
+        // No release; a click on empty space instead.
+        t.pointer(&c, &PointerEvent::new(PointerKind::Down, 20.0, 20.0));
+        assert_eq!(t.pointer(&c, &PointerEvent::new(PointerKind::Up, 20.0, 20.0)), vec![Action::Exec("select.none".into(), json!({}))]);
+        // Nor a click on the square itself.
+        t.pointer(&c, &PointerEvent::new(PointerKind::Down, 350.0, 350.0));
+        assert_eq!(t.pointer(&c, &PointerEvent::new(PointerKind::Up, 350.0, 350.0)), vec![]);
+    }
+
+    /// With Alt, Direct Selection is Group Selection to the hover and the cursor too: no anchor
+    /// highlight, and a ruler guide under a highlighted anchor takes the press (and the cursor);
+    /// Group Selection with Alt highlights anchors as Direct Selection does.
+    #[test]
+    fn alt_swaps_the_hover_and_cursor_too() {
+        let (mut d, _) = doc_with_rect();
+        d.guides.push(vectorcraft_doc::Guide::new(true, 100.0));
+        let (s, p) = (Selection::default(), paint());
+        let c = cx(&d, &s, &p);
+        let alt = Mods { alt: true, ..Default::default() };
+        let highlighted = |t: &DirectSelectionTool| t.overlays(&c).iter().any(|o| matches!(o, Overlay::Anchor { size, .. } if *size > 5.0));
+        let mut t = DirectSelectionTool::new(false);
+        t.pointer(&c, &PointerEvent::new(PointerKind::Move, 101.0, 101.0));
+        assert!(highlighted(&t));
+        assert_eq!(t.cursor(&c, Point::new(101.0, 101.0), Mods::default()), Cursor::ArrowHollow, "the anchor is picked, not the guide");
+        assert_eq!(t.cursor(&c, Point::new(101.0, 101.0), alt), Cursor::ResizeH, "as Group Selection, the guide is");
+        t.pointer(&c, &PointerEvent::new(PointerKind::Move, 101.0, 101.0).with_mods(alt));
+        assert!(!highlighted(&t));
+        let mut gs = DirectSelectionTool::new(true);
+        gs.pointer(&c, &PointerEvent::new(PointerKind::Move, 101.0, 101.0));
+        assert!(!highlighted(&gs));
+        gs.pointer(&c, &PointerEvent::new(PointerKind::Move, 101.0, 101.0).with_mods(alt));
+        assert!(highlighted(&gs));
     }
 
     /// Alt switches between Direct Selection and Group Selection

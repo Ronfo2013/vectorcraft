@@ -44,8 +44,12 @@ pub struct GestureTool {
     pub alt_smooth: bool,
     /// The Pencil's current stroke is a Smooth stroke (begun with Alt).
     smoothing: bool,
+    /// The Smooth tool's Fidelity, which the Pencil's Smooth strokes use (`smoothFidelity`,
+    /// borrowed from the Smooth tool's saved options: [`crate::settings::BORROWS`]).
+    smooth_fidelity: f64,
     /// The Knife with Alt held: the cut is the straight line from the press to the pointer, and
-    /// with Shift too it is held to 45° steps.
+    /// with Shift too it is held to 45° steps. Read while the button is down, so the cut is the
+    /// line last previewed even when a key goes up just before the button.
     straight: bool,
     constrain: bool,
     /// Smart Guides for the Pencil's ends.
@@ -79,6 +83,7 @@ impl GestureTool {
             close_within: 15.0,
             alt_smooth: true,
             smoothing: false,
+            smooth_fidelity: 2.5,
             straight: false,
             constrain: false,
             snap: DrawSnap::default(),
@@ -99,12 +104,20 @@ impl GestureTool {
         matches!(self.acting(), "pencil" | "paintbrush")
     }
 
-    /// The Knife's cut: the stroke, or with Alt the straight line from the press to the pointer,
-    /// held to 45° steps with Shift (the shortcut reference, "Edit shapes").
-    fn knife_points(&self) -> Vec<Point> {
+    /// The Knife's straight cut with Alt held: the line from the press to the pointer, held to 45°
+    /// steps with Shift (the shortcut reference, "Edit shapes"). None without Alt: the cut is the
+    /// stroke.
+    fn straight_cut(&self) -> Option<[Point; 2]> {
         match (self.straight, self.points.first(), self.points.last()) {
-            (true, Some(&a), Some(&b)) => vec![a, a + crate::bbox::move_delta(a, b, self.constrain)],
-            _ => self.points.clone(),
+            (true, Some(&a), Some(&b)) => Some([a, a + crate::bbox::move_delta(a, b, self.constrain)]),
+            _ => None,
+        }
+    }
+
+    /// The Knife reads Alt and Shift while the button is down (a press, a drag).
+    fn knife_mode(&mut self, m: Mods) {
+        if self.id == "knife" {
+            (self.straight, self.constrain) = (m.alt, m.shift);
         }
     }
 
@@ -195,9 +208,13 @@ impl GestureTool {
             }
             "blobBrush" => vec![Action::Exec("path.blob".into(), json!({"points": points_json(pts), "size": self.size}))],
             "eraser" => vec![Action::Exec("path.eraseRegion".into(), json!({"points": points_json(pts), "size": self.size}))],
-            "knife" if pts.len() >= 2 => vec![Action::Exec("path.knife".into(), json!({"points": points_json(&self.knife_points())}))],
+            "knife" if pts.len() >= 2 => {
+                let points = self.straight_cut().map_or_else(|| points_json(pts), |line| points_json(&line));
+                vec![Action::Exec("path.knife".into(), json!({"points": points}))]
+            }
             "smooth" if has_sel && pts.len() >= 2 => {
-                vec![Action::Exec("path.smoothRegion".into(), json!({"points": points_json(pts), "radius": tol, "fidelity": self.fidelity}))]
+                let fidelity = if self.smoothing { self.smooth_fidelity } else { self.fidelity };
+                vec![Action::Exec("path.smoothRegion".into(), json!({"points": points_json(pts), "radius": tol, "fidelity": fidelity}))]
             }
             "pathEraser" if has_sel => vec![Action::Exec("path.eraseSegments".into(), json!({"points": points_json(pts), "width": cx.tol(8.0)}))],
             "join" if pts.len() >= 2 => vec![Action::Exec("path.joinScrub".into(), json!({"points": points_json(pts), "tolerance": tol}))],
@@ -227,7 +244,7 @@ impl Tool for GestureTool {
                 // shapes": Alt switches the Pencil to the Smooth tool, an option of the Pencil);
                 // the Knife cuts straight.
                 self.smoothing = self.id == "pencil" && self.alt_smooth && ev.mods.alt;
-                (self.straight, self.constrain) = (self.id == "knife" && ev.mods.alt, ev.mods.shift);
+                self.knife_mode(ev.mods);
                 self.extend = if self.draws_path() { self.find_extend(cx, p) } else { None };
                 // A path continued starts at its end; a new one where it snaps.
                 let start = if self.snaps() && self.extend.is_none() { self.snap.press(cx, p, &[], None) } else { p };
@@ -239,9 +256,7 @@ impl Tool for GestureTool {
                 if !self.active {
                     return vec![];
                 }
-                if self.id == "knife" {
-                    (self.straight, self.constrain) = (ev.mods.alt, ev.mods.shift);
-                }
+                self.knife_mode(ev.mods);
                 if self.snaps() {
                     // Where the stroke would end: shown, taken on release.
                     self.snap.drag(cx, p, None);
@@ -265,9 +280,7 @@ impl Tool for GestureTool {
                 if !self.active {
                     return vec![];
                 }
-                if self.id == "knife" {
-                    (self.straight, self.constrain) = (ev.mods.alt, ev.mods.shift);
-                }
+                // The Knife keeps the mode of the last drag: the cut is the line previewed.
                 let end = if self.snaps() { self.snap.drag(cx, p, None) } else { p };
                 self.snap.clear();
                 if self.points.last().is_some_and(|l| l.distance(p) >= cx.tol(1.0)) {
@@ -331,8 +344,9 @@ impl Tool for GestureTool {
             _ => 1.0,
         };
         let color = if self.id == "eraser" { [0x80, 0x80, 0x80] } else { FEEDBACK };
-        let points = if self.id == "knife" { self.knife_points() } else { self.points.clone() };
-        o.push(Overlay::Path { path: polyline(&points), color, width, dashed: self.id == "knife" });
+        let line = self.straight_cut();
+        let points: &[Point] = line.as_ref().map_or(self.points.as_slice(), |l| l.as_slice());
+        o.push(Overlay::Path { path: polyline(points), color, width, dashed: self.id == "knife" });
         o
     }
     fn cursor(&self, _cx: &ToolContext, _p: Point, _m: Mods) -> Cursor {
@@ -342,7 +356,7 @@ impl Tool for GestureTool {
         match self.id {
             "pencil" => json!({
                 "fidelity": self.fidelity, "fill": self.fill, "editWithin": self.edit_within, "closeWithin": self.close_within,
-                "altSmooth": self.alt_smooth,
+                "altSmooth": self.alt_smooth, "smoothFidelity": self.smooth_fidelity,
             }),
             "paintbrush" => {
                 json!({"fidelity": self.fidelity, "fill": self.fill, "editWithin": self.edit_within, "closeWithin": self.close_within})
@@ -360,6 +374,7 @@ impl Tool for GestureTool {
             "editWithin" => self.edit_within = v.as_f64().unwrap_or(self.edit_within).clamp(0.0, 100.0),
             "closeWithin" => self.close_within = v.as_f64().unwrap_or(self.close_within).clamp(0.0, 100.0),
             "altSmooth" => self.alt_smooth = v.as_bool().unwrap_or(self.alt_smooth),
+            "smoothFidelity" => self.smooth_fidelity = v.as_f64().unwrap_or(self.smooth_fidelity).clamp(0.05, 100.0),
             _ => {}
         }
     }
@@ -510,9 +525,12 @@ mod tests {
         };
         let mut t = GestureTool::new("pencil");
         assert_eq!(t.options()["altSmooth"], true);
+        // With the Smooth tool's own Fidelity (borrowed as `smoothFidelity`), not the Pencil's.
+        t.set_option("fidelity", &json!(1.0));
+        t.set_option("smoothFidelity", &json!(7.0));
         let a = stroke(&mut t);
         assert!(
-            matches!(a.as_slice(), [Action::Exec(c, v)] if c == "path.smoothRegion" && v["points"].as_array().is_some_and(|p| p.len() == 3)),
+            matches!(a.as_slice(), [Action::Exec(c, v)] if c == "path.smoothRegion" && v["fidelity"] == 7.0 && v["points"].as_array().is_some_and(|p| p.len() == 3)),
             "{a:?}"
         );
         // The next stroke without Alt draws again.
@@ -532,7 +550,8 @@ mod tests {
     /// The Knife cuts a straight line with Alt, held to 45° or 90° with Shift too
     /// (https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html, "Edit
     /// shapes"): the cut (and its preview) is the line from the press to the pointer, whatever
-    /// way the hand went.
+    /// way the hand went. The keys count as of the last drag: let go just before the button, the
+    /// cut is still the line previewed.
     #[test]
     fn knife_with_alt_cuts_straight_and_shift_holds_it_to_45_degrees() {
         let (d, _) = doc_with_rect();
@@ -550,7 +569,8 @@ mod tests {
                 Overlay::Path { path, .. } => Some(path.elements().len()),
                 _ => None,
             });
-            let a = k.pointer(&cx, &PointerEvent::new(PointerKind::Up, 250.0, 160.0).with_mods(m));
+            // The keys are up by the time the button is.
+            let a = k.pointer(&cx, &PointerEvent::new(PointerKind::Up, 250.0, 160.0));
             let Some(Action::Exec(c, v)) = a.first() else { panic!("{a:?}") };
             assert_eq!(c, "path.knife");
             (preview, v["points"].clone())

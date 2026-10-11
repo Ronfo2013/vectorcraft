@@ -60,6 +60,12 @@ const ROWS: &[Row] = &[
     ),
 ];
 
+/// Options a tool reads from another tool's store without owning them: (tool, store, the key in
+/// the store, the option the tool takes it as). The Pencil's Alt strokes smooth with the Smooth
+/// tool's Fidelity. Read when the tool is made and when the lending tool's options change; never
+/// written back by the borrower.
+pub const BORROWS: &[(&str, &str, &str, &str)] = &[("pencil", "smooth", "fidelity", "smoothFidelity")];
+
 /// The stores `tool`'s persistent options live in, each with the option keys it holds.
 pub fn stores(tool: &str) -> impl Iterator<Item = (&'static str, &'static [&'static str])> + '_ {
     ROWS.iter().filter_map(move |(tools, shared, keys)| {
@@ -82,6 +88,19 @@ mod tests {
                     assert!(opts.get(*k).is_some(), "{id} reports `{k}` in {opts}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn every_borrowed_option_is_kept_by_its_lender_and_taken_by_its_borrower() {
+        for (tool, store, key, opt) in BORROWS {
+            let lender = ROWS
+                .iter()
+                .find(|(tools, shared, _)| tools.iter().any(|t| shared.unwrap_or(t) == *store))
+                .unwrap_or_else(|| panic!("{store} is a store"));
+            assert!(lender.2.contains(key), "{store} keeps `{key}`");
+            assert!(crate::create(tool).options().get(*opt).is_some(), "{tool} reports `{opt}`");
+            assert!(!stores(tool).any(|(_, keys)| keys.contains(opt)), "{tool} doesn't own `{opt}`");
         }
     }
 
