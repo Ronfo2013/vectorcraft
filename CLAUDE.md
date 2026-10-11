@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # VectorCraft — instructions for agents
 
 VectorCraft is a clean-room, open-source, Rust-native vector illustration app targeting Adobe Illustrator parity (and beyond). It runs natively on macOS, Windows and Linux, and on the web via WASM. Siblings: `../photocraft` (Photoshop-class) and `../pdfcraft` (Acrobat-class); same conventions.
@@ -9,7 +13,22 @@ Formerly **DrawCraft** (renamed 2026-10-01): old `.drawcraft` files and `"format
 2. Read `plan/STATUS.md` (local session notes, may lag the ROADMAP), then the task in `plan/execution-plan.md` §3 and the relevant `plan/architecture.md` section. Behaviour reference: public documentation only (see Clean-room below); `plan/illustrator/*.md` holds notes from it.
 3. Follow the autonomous operation protocol (`plan/execution-plan.md` §7): orient → plan → implement + test → verify → record → commit. Don't stop to ask unless §7 lists the decision as the user's.
 
-`plan/` is gitignored (local only).
+`plan/` is gitignored (local only), so a fresh clone (e.g. a cloud session) has none of it: then work from `ROADMAP.md`, `docs/gaps.md` and `docs/architecture.md`.
+
+## Commands
+- `cargo xtask ci`: the full gate, in order fmt → `clippy --workspace --all-targets -D warnings` → `test --workspace` → assets → brands → layers → wasm; stops at the first failure and prints a summary. There is no GitHub Actions CI for this; run it locally.
+- Single steps: `cargo xtask assets|brands|layers|wasm` (wasm = `cargo check --target wasm32-unknown-unknown` per web crate). Other xtasks: `corpus [--download|--affinity]`, `bundle`, `web-fonts`, `stats`, `version`.
+- One crate / one test: `cargo test -p vectorcraft-engine <name_filter>`; one integration-test file: `cargo test -p vectorcraft-engine --test import_fuzz`. Packages are `vectorcraft-<crate dir>` (e.g. `vectorcraft-ui-egui`).
+- Deep fuzz run: `PROPTEST_CASES=20000 cargo test --release -p vectorcraft-engine --test import_fuzz`.
+- `cargo xtask brands` fails when user-visible strings (command labels, params docs, menus, MCP tool defs, `Cargo.toml` descriptions, packaging) name another vendor: say "the reference app" or name the feature. A line that must keep an old name carries a `brand-ok` comment.
+- i18n: UI strings stay English in code and are wrapped in `tl!("…")`; catalogs are `crates/ui-egui/src/i18n/<code>.tsv`. Command ids, the control channel, CLI and MCP always use English. Details: `docs/development.md` › Localisation.
+
+## Architecture (big picture; full version in `docs/architecture.md`)
+Layered workspace, enforced by `cargo xtask layers` (table in `xtask/src/layers.rs`); a crate may depend only on lower layers:
+L0 `geom`, `color` (+ standalone `affinity`) → L1 `doc` (document model, pure data + serde, structural sharing) → L2 `pathops`, `brush`, `trace`, `text`, `effects`, `plugins`, `three-d` → L3 `render` (`vello_cpu`), `svg`, `pdf`, `format` (native `.vectorcraft`), `eps`, `cad`, `metafile` → L4 `tools` (pointer events in, commands + overlays out) → L5 `engine` (sessions, undo history, selection, command registry, file I/O, panic guard) → L6 `ui-egui`, `mcp` → L7 `apps/vectorcraft` (desktop), `apps/vectorcraft-cli`, `apps/vectorcraft-web`, `xtask`. `testkit` is dev-only.
+- The same engine drives desktop, web, CLI and MCP; menus, command palette, Actions, control channel and MCP all go through the one command registry (`command.batch` = one undo step).
+- Every format read or written is listed in `FORMATS` in `crates/engine/src/cmd/fileio/mod.rs`.
+- The canvas is rasterized on CPU worker threads; the GPU (wgpu) only composites.
 
 ## Non-negotiables
 - **Clean-room: never use Adobe software (absolute rule, from the project owner).** Adobe's Terms of Use forbid reverse engineering, including observing a program's inputs and outputs to recreate it. So:
@@ -17,7 +36,7 @@ Formerly **DrawCraft** (renamed 2026-10-01): old `.drawcraft` files and `"format
   - Never read, disassemble or copy anything inside an Adobe install (binaries, plug-ins, presets, procsets, resources, help files, fonts, ICC profiles).
   - Never copy Adobe-authored code or text into this repo, tests included: no PostScript procsets or prologs (AGM, CoolType, the Illustrator prologs), no sample files. Write test inputs from scratch from the public specifications (PostScript Language Reference, PDF / ISO 32000, TIFF, EPSF/DCS).
   - Behaviour comes only from public documentation (helpx, published specs, public forum posts), cited by URL, and from files users send us that they own (used locally, never committed). Never copy Adobe icons, artwork, presets or wording beyond feature names.
-  - If a task seems to need any of this, stop and say so instead. `cargo xtask cleanroom` (run by `cargo xtask ci`) fails on Adobe copyright notices and on fixtures made with Adobe applications.
+  - If a task seems to need any of this, stop and say so instead. No xtask checks for Adobe copyright notices or Adobe-made fixtures (there is no `cargo xtask cleanroom`), so this is on you; `cargo xtask brands` only catches vendor names in user-visible strings.
   - Never copy GPL/AGPL code (Inkscape, lib2geom…).
 - **Assets: no Adobe iconography or images — ever (absolute rule, from the project owner).**
   - Never add, copy, trace, redraw-from, embed or ship any icon, image, artwork, cursor, preset, swatch/brush/symbol/pattern/style library, ICC profile or screenshot from Adobe products or from any other source whose licence doesn't allow it.
@@ -45,7 +64,7 @@ Formerly **DrawCraft** (renamed 2026-10-01): old `.drawcraft` files and `"format
 - **The UI is thin**: panels read engine state and act through `app.run(id, params)`. Colours come from `theme::Tokens`.
 - **Rust only** (no handwritten JS/TS). **Never break wasm** (`cargo xtask wasm`).
 - **Shared test corpora.** Real-file test oracles (Photoshop-authored PSDs, etc.) live in [`storytold/photocraft-corpus`](https://github.com/storytold/photocraft-corpus), explained in [craftrules `standards/test-corpora.md`](https://github.com/storytold/craftrules/blob/main/standards/test-corpora.md). Never commit large binary fixtures to this repo; fetch them pinned by commit and sha256-verified, as PhotoCraft does with `cargo xtask corpus`.
-- **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings including the no-panic lints, tests, layers, wasm). One task id per commit (`M2.1: pen tool`).
+- **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings including the no-panic lints, tests, assets, brands, layers, wasm). One task id per commit (`M2.1: pen tool`).
 
 ## Running and looking at the app
 - `cargo run --release -p vectorcraft -- --control 7979 [file.svg|file.vectorcraft]` (sibling apps' agents use the same default port: if the log says it failed to bind, pick another port — otherwise your requests reach a different app).
@@ -66,3 +85,6 @@ The progress docs follow craftrules' [`standards/progress-docs.md`](https://gith
 When a task lands, update in the same PR: the area row in `docs/target-app-parity.md` (score, missing items, hours) and its evidence list, the gap entry in `docs/gaps.md` if it closed or shrank, the checklist it belongs to, the milestone row in `docs/roadmap.md`, and the ROADMAP's tables and progress log when a headline number moves. Update each touched doc's status line and revision history.
 - Grade by behaviour against the public documentation (`plan/illustrator/` notes), not by whether a menu item exists. Scores are self-assessed, so err low; mark each number measured or estimated.
 - Keep the README's Status section in step with the ROADMAP headline.
+
+## Contributor credits
+About › Contributors is built from `contributors/contributors.json` (generated, never hand-edit) and `contributors/people.toml`. When preparing a PR for a person, follow the rules in `AGENTS.md` › Contributor credits: add only their own entry, only if they ask; never add or guess anyone else's.

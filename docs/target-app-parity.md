@@ -1,6 +1,6 @@
 # Parity with Adobe Illustrator
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (File formats: `.ai` editing-data layer structure under property tests, PDF layers repeated per page merged, unreadable private data named in the notes, G9 #951/#868/#779/#758, score unchanged; Drawing tools: Live Corners round corners between curved sides, #1144; Type advanced: proportional vertical metrics (`vpal`) done, #966; Shape Builder: #893 fixed, merged regions of crossing lines no longer keep seams; scores unchanged while #937 is open; #1034: document-point character controls after object/group scaling; full readiness recomputed as the standard's additive weighted sum, ~62%; per-audience hours; essentials-user score ~75% added; ready-for-real-work re-examined: 50% → 55%, mainstream 65% added; earlier the same day: full re-measure against Illustrator 2026 30.x; merged the ROADMAP's parity estimate, honest assessment and "Shipped so far" into this file) · **Target:** Adobe Illustrator 2026 (30.x; public release notes through 30.7, August 2026)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (File formats: a real Illustrator 30.8 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure under property tests, PDF layers repeated per page merged, unreadable private data named, G9 #951/#868/#779/#758, score unchanged; Shape Builder: lines cut art of thousands of segments again, #937's reproduced case, scores unchanged until confirmed on the reporter's file; Drawing tools: Live Corners round corners between curved sides, #1144; Type advanced: proportional vertical metrics (`vpal`) done, #966; Shape Builder: #893 fixed, merged regions of crossing lines no longer keep seams; scores unchanged while #937 is open; #1034: document-point character controls after object/group scaling; full readiness recomputed as the standard's additive weighted sum, ~62%; per-audience hours; essentials-user score ~75% added; ready-for-real-work re-examined: 50% → 55%, mainstream 65% added; earlier the same day: full re-measure against Illustrator 2026 30.x; merged the ROADMAP's parity estimate, honest assessment and "Shipped so far" into this file) · **Target:** Adobe Illustrator 2026 (30.x; public release notes through 30.7, August 2026)
 
 The authoritative parity assessment. [`ROADMAP.md`](../ROADMAP.md) summarizes it; [`gaps.md`](gaps.md) is
 the work list made from it. Deep areas have their own checklists: [UI and interaction](ui-parity.md),
@@ -69,7 +69,7 @@ dominate; 3D, graphs and automation are specialist). They sum to 105. Feature de
 |---|---:|---:|---|---:|---|
 | Selection, transform & align tools | 6 | 85% | Free Transform/Scale/Reflect along a rotated box, Start Global Edit, transform nuances | 4–6 | estimated |
 | Drawing tools (Pen, Curvature, Pencil, shapes, Shaper) | 7 | 85% | Shaper construction widget, Pencil/Pen nuances, Blob Brush options, Touch Type, Dimension tool, Live Corners' Relative rounding; see [ui-parity.md](ui-parity.md) | 8–13 | estimated |
-| Path operations, Pathfinder, Shape Builder, Live Paint | 5 | 80% | Shape Builder misses planar regions in real files (#937), its gap detection and options; Live Paint Gap Options | 4–8 | estimated (lowered from 86%: open issues) |
+| Path operations, Pathfinder, Shape Builder, Live Paint | 5 | 80% | Shape Builder on the reporter's file (#937: art past 4096 segments is cut by lines again; unconfirmed on the file itself), its gap detection and options; Live Paint Gap Options | 4–8 | estimated (lowered from 86%: open issues) |
 | Colour, swatches, gradients, patterns, mesh, recolor | 7 | 92% | 30.0's gradient dither, perceptual blending and gradient presets; freeform and mixed spot/process gradients in SVG/PDF | 4–7 | estimated (lowered from 96%: target moved) |
 | Strokes, brushes, width profiles | 5 | 88% | Art brush Overlap, Pattern brush auto corners, brush libraries, pen pressure on macOS, tilt/bearing/rotation | 8–15 | estimated |
 | Appearance, transparency, graphic styles, masks | 5 | 97% | raster effect reach in preview bounds | 1–2 | estimated |
@@ -201,7 +201,7 @@ Depth here is "does the basic use work", not the area's full score.
 | Type: point and area text, font, size | 8 | 88% | font menu with previews; hyphenation options missing (rarely touched) |
 | Align, group, arrange | 6 | 95% | |
 | Layers, basic | 4 | 85% | Layers panel rework; no row context menus |
-| Shape Builder | 5 | 70% | beginners lean on it; region detection fails in some files (#937) |
+| Shape Builder | 5 | 70% | beginners lean on it; region detection failed on art of thousands of segments (#937's reproduced case, fixed; unconfirmed on the reporter's file) |
 | Pathfinder | 4 | 95% | exact booleans |
 | Place images, Image Trace | 4 | 85% | 13 trace presets |
 | Export PNG/JPG/SVG/PDF, print | 8 | 88% | ghost borders in some Asset Export output (#983) |
@@ -472,6 +472,7 @@ Moved from the ROADMAP's "Shipped so far" on 2026-10-10. Update it when a featur
 |---|---|---|
 | 2026-10-11 | minor | File formats: a real Illustrator 30.8 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared); meshes added to the missing list; score 75% unchanged (estimated) |
 | 2026-10-11 | minor | File formats: G9 audit of the `.ai` layer structure (property tests, per-page PDF layer merge, named fallback reasons: #951, #868, #779, #758); score 75% and hours unchanged, the users' files still needed (estimated) |
+| 2026-10-11 | minor | Shape Builder on art of thousands of segments (traced outlines, type outlines): lines cut it again past 4096 segments, where the planar map used to give up and the tool offered whole shapes (#937's reproduced case; the map's edge-source lookup was quadratic, now indexed, and the cap is 65 536); scores unchanged (estimated) |
 | 2026-10-11 | minor | Platforms: Preferences › Performance › Linux Display Server opens the window through XWayland, where file drops work (#1151); score unchanged (estimated) |
 | 2026-10-11 | minor | Drawing tools: Live Corners on corners between curved sides (#1144) leaves the missing list; score and hours unchanged at this rounding (estimated) |
 | 2026-10-11 | minor | Type advanced: Proportional Metrics in vertical type (`vpal`, #966) leaves the missing list; score and hours unchanged at this rounding (estimated) |
