@@ -388,7 +388,8 @@ fn text_objects_are_slots_named_after_their_story() {
 
 #[test]
 fn what_it_doesnt_read_is_an_error_where_it_shows() {
-    let e = read(stream(&layer("1 2 frobnicate\n")).as_bytes()).unwrap_err();
+    // An operator this doesn't know while a path is being built could paint it: an error.
+    let e = read(stream(&layer("0 0 m\n1 2 frobnicate\nf\n")).as_bytes()).unwrap_err();
     assert!(e.contains("`frobnicate`"), "{e}");
     let e = read(stream(&layer("(Jive) 0 0 1 1 0 0 0 0 0 [1 0 0 1 0 0] p\n")).as_bytes()).unwrap_err();
     assert!(e.contains("pattern fills"), "{e}");
@@ -397,7 +398,8 @@ fn what_it_doesnt_read_is_an_error_where_it_shows() {
     // On a layer that doesn't show, it is left out of it.
     let hidden = "%AI5_BeginLayer\n0 1 1 1 0 0 0 1 255 79 79 0 50 0 Lb\n(Off) Ln\n1 2 frobnicate\n(J) 0 0 1 1 0 0 0 0 0 [1 0 0 1 0 0] p\nLB\n%AI5_EndLayer--\n";
     let r = read_ok(hidden);
-    assert_eq!(r.hidden_unread.iter().cloned().collect::<Vec<_>>(), ["`frobnicate`", "pattern fills"]);
+    assert_eq!(r.hidden_unread.iter().cloned().collect::<Vec<_>>(), ["pattern fills"]);
+    assert!(r.warnings.iter().any(|w| w.starts_with(read::OPERATORS_SKIPPED) && w.contains("`frobnicate`")), "{:?}", r.warnings);
     // Unbalanced containers, a layer that doesn't end, no layers.
     assert!(read(stream(&layer("U\n")).as_bytes()).is_err());
     assert!(read(stream("%AI5_BeginLayer\n(L) Ln\n0 Ae\nu\n").as_bytes()).is_err());

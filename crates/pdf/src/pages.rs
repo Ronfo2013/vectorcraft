@@ -135,15 +135,10 @@ const PRIVATE_DATA_OWNER: &[u8] = b"Illustrator"; // brand-ok: the key the files
 const MAX_PRIVATE: usize = 256 << 20;
 
 /// The private data of an Illustrator `.ai` (its first page's `PieceInfo`): the `AIPrivateData`
-/// streams in order, joined. `None` for a PDF without them (or with a stream that can't be read).
-/// What it holds is the editor's own copy of the art (see `vectorcraft_eps::layered_ai`).
-pub fn illustrator_data(bytes: &[u8], password: Option<&str>) -> Option<Vec<u8>> {
-    illustrator_data_checked(bytes, password)?.ok()
-}
-
-/// [`illustrator_data`], saying why a file that has private data streams gives none: `None` for a
-/// PDF without them, `Some(Err(why))` for one whose streams can't be read (the import then says
-/// why the layers come from the PDF part instead of silently reading it as a plain PDF: #951, #868).
+/// streams in order, joined. What it holds is the editor's own copy of the art (see
+/// `vectorcraft_eps::layered_ai`). `None` for a PDF without them, `Some(Err(why))` for one whose
+/// streams can't be read, or skip a number (the import then says why the layers come from the PDF
+/// part instead of silently reading it as a plain PDF: #951, #868).
 pub fn illustrator_data_checked(bytes: &[u8], password: Option<&str>) -> Option<Result<Vec<u8>, String>> {
     let pdf = open(bytes, password).ok()?;
     let page = pdf.pages().first()?;
@@ -164,12 +159,13 @@ pub fn illustrator_data_checked(bytes: &[u8], password: Option<&str>) -> Option<
             None => return Some(Err(format!("its private data stream {n} can't be decoded (or the data is larger than {} MB)", MAX_PRIVATE >> 20))),
         }
     }
-    if data.is_empty() {
-        // Empty streams are no data; streams the numbering skips can't be read.
-        return (streams == 0 && private.keys().any(|k| k.starts_with(b"AIPrivateData")))
-            .then(|| Err("its private data streams aren't numbered from 1".to_string()));
+    // Every stream must be read, in order: one the numbering skips would leave a hole in the data.
+    let keys = private.keys().filter(|k| k.starts_with(b"AIPrivateData")).count();
+    if keys > streams as usize {
+        return Some(Err(format!("its private data streams aren't numbered 1 to {keys}: stream {} is missing", streams + 1)));
     }
-    Some(Ok(data))
+    // Empty streams are no data.
+    (!data.is_empty()).then_some(Ok(data))
 }
 
 /// `stream` decoded, up to `most` bytes: the decoder is run here rather than by the PDF reader's

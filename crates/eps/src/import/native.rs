@@ -42,15 +42,26 @@ const TEXT_LEFT_OUT: &str = "text objects on hidden layers or hidden objects cou
 const TYPE_LEFT_OUT: &str = "text objects of kinds VectorCraft doesn't read from the file's text document yet are left out";
 const ART_LEFT_OUT: &str = "hidden layers have art this can't read";
 /// The start of the note given when a file's layers come from its page or PDF part instead of
-/// its editing data; the reason follows.
+/// its editing data; the reason follows ([`layers_unread_note`]).
 pub const LAYERS_UNREAD: &str = "the file's layers weren't read";
+/// The note for a `.ai` whose editing data has no layers at all: its PDF part is all its art, so
+/// nothing is lost ([`is_loss`] doesn't match it).
+pub const NO_LAYERS_NOTE: &str = "the file's editing data has no layers: they come from its PDF part";
+
+/// The note for a `.ai` whose layers come from its PDF part because its editing data couldn't be
+/// read (`why`); it counts as a loss ([`is_loss`]).
+pub fn layers_unread_note(why: &str) -> String {
+    format!("{LAYERS_UNREAD} from its editing data ({why}): they come from its PDF part")
+}
 
 /// Does this import note say that the file has something the document doesn't (hidden text, art or
 /// layers that could not be read)? Writing the document over the file would lose it for good.
 pub fn is_loss(note: &str) -> bool {
     note.ends_with(TEXT_LEFT_OUT)
         || note.ends_with(TYPE_LEFT_OUT)
-        || [ART_LEFT_OUT, LAYERS_UNREAD, super::graphics::TOO_MUCH, super::graphics::FAR_AWAY].iter().any(|n| note.starts_with(n))
+        || [ART_LEFT_OUT, LAYERS_UNREAD, ai::OBJECTS_LEFT_OUT, super::graphics::TOO_MUCH, super::graphics::FAR_AWAY]
+            .iter()
+            .any(|n| note.starts_with(n))
 }
 
 /// Most text objects in the layers, and most pieces of type in one place on the page, that are matched
@@ -1008,6 +1019,8 @@ fn prune_unseen(frame: &Frame<'_>, view: &mut PageView, doc: &mut Document) -> u
 
 /// How far (points) the art the layers print may reach past a page that holds it all.
 const PAST_THE_PAGE: f64 = 1.0;
+/// How many artboards after the first are compared with their pages (each is a drawing of both).
+const MAX_COMPARED_PAGES: usize = 32;
 
 /// Do the layers' art and the page's own look alike (where the page holds all the art that prints,
 /// also round it)? An error says they don't; `Ok` has the note to give when they differ a little.
@@ -1025,6 +1038,20 @@ fn compare(frame: &Frame<'_>, view: &mut PageView, layered: &Document) -> Result
     }
     if diff.any > MAX_DIFFERENCE || diff.solid > MAX_SOLID_DIFFERENCE {
         return Err(format!("the art on them differs from the page's in {:.1}% of it", diff.any * 100.0));
+    }
+    // The other artboards of a `.ai`, each against its page (the PDF part has one per artboard,
+    // of the same size, in the same order): an object the layers lack on any of them (one of a
+    // kind the reader leaves out, say) counts as much as on the first (#951: a file of four
+    // artboards whose gradient meshes are all on the second).
+    for (i, (a, p)) in layered.artboards.iter().zip(&frame.page.artboards).enumerate().skip(1).take(MAX_COMPARED_PAGES) {
+        if (a.rect.width() - p.rect.width()).abs() > 0.5 || (a.rect.height() - p.rect.height()).abs() > 0.5 {
+            continue;
+        }
+        let d = difference(frame.page, p.rect, layered, a.rect);
+        if d.any > MAX_DIFFERENCE || d.solid > MAX_SOLID_DIFFERENCE {
+            return Err(format!("the art on them differs from the page's in {:.1}% of artboard {}", d.any * 100.0, i + 1));
+        }
+        diff = Difference { any: diff.any.max(d.any), solid: diff.solid.max(d.solid) };
     }
     Ok((diff.any > NOTABLE_DIFFERENCE).then(|| {
         format!(
@@ -1069,7 +1096,12 @@ pub fn layered_ai(private: &[u8], visible: Document, warnings: Vec<String>, outl
     // Whatever stops the layers being read is said (#951, #868: files opened as their PDF part
     // with no note saying why).
     let (data, result) = match ai::decode_private(private) {
-        Ok(data) if !has_layers(&data) => (Some(data), Err("it has no layers".to_string())),
+        // Data without layers has no art the PDF part lacks: a note, not a loss.
+        Ok(data) if !has_layers(&data) => {
+            let mut all = warnings;
+            all.push(NO_LAYERS_NOTE.to_string());
+            return (visible, all);
+        }
         Ok(data) => {
             let r = build(&data, Some(&visible), Page::Artboard, outlined);
             (Some(data), r)
@@ -1084,7 +1116,7 @@ pub fn layered_ai(private: &[u8], visible: Document, warnings: Vec<String>, outl
         }
         Err(why) => {
             let mut all = warnings;
-            all.push(format!("{LAYERS_UNREAD} from its editing data ({why}): they come from its PDF part"));
+            all.push(layers_unread_note(&why));
             let mut visible = visible;
             if let Some(data) = data {
                 place_pages(&ai::artboards(&data), &mut visible);

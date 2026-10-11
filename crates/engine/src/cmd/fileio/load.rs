@@ -147,7 +147,7 @@ fn through_editing_data(bytes: &[u8], opts: &LoadOptions, doc: Document, mut war
         Some(Ok(private)) => private,
         // Private data it can't read is said, like editing data it can't read (#951, #868).
         Some(Err(why)) => {
-            warnings.push(format!("{} from its editing data ({why}): they come from its PDF part", vectorcraft_eps::LAYERS_UNREAD));
+            warnings.push(vectorcraft_eps::layers_unread_note(&why));
             return (doc, warnings);
         }
         None => return (doc, warnings),

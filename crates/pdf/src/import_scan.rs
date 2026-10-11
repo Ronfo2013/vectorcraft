@@ -60,9 +60,15 @@ pub(crate) struct Ocgs {
     placed: HashSet<usize>,
     /// The layer each group stands for ([`Ocgs::canonical`]).
     canon: Vec<usize>,
-    /// The groups that have marked content on a page read so far.
+    /// The groups on a page read so far (marking content, or an ancestor of one that does).
     settled: Vec<bool>,
+    /// The layers (settled groups standing for themselves) by what makes two groups one layer:
+    /// name, states and parent layer ([`Ocgs::merge_repeats`]).
+    layers: HashMap<LayerKey, Vec<usize>>,
 }
+
+/// What two groups must share to be one layer: name, on, print, locked, parent layer.
+type LayerKey = (String, bool, bool, bool, Option<usize>);
 
 impl Ocgs {
     /// The groups listed in the catalog's `/OCProperties`, with their default states.
@@ -178,54 +184,66 @@ impl Ocgs {
         self.list.get(g)?.parent.map(|p| self.canonical(p))
     }
 
-    /// How deep group `g` is listed in the layer order.
-    fn depth(&self, g: usize) -> usize {
-        let mut depth = 0;
-        let mut at = g;
-        while let Some(p) = self.parent_of(at).filter(|_| depth < MAX_NESTING) {
-            depth += 1;
-            at = p;
-        }
-        depth
+    /// What makes group `g` one layer with another: its name, states and parent layer.
+    fn key_of(&self, g: usize) -> Option<LayerKey> {
+        let o = self.list.get(g)?;
+        Some((o.name.clone(), o.on, o.print, o.locked, self.parent_of(g)))
     }
 
     /// Merge the groups a page marks (`scan`, its tags rewritten) with the layers of the pages
-    /// before it: a group marking content for the first time that has the name, states and parent
-    /// of a layer of an earlier page, which this page doesn't mark itself, is that layer. A
-    /// document's layers are the same on every artboard, and a file of many artboards may write
-    /// its layers again for each page (#951: a book of 100 pages and 14 layers opened with 1400).
-    /// Two groups of one name marked on the same page stay two layers.
+    /// before it: a group on a page for the first time (marking content, or a layer whose art
+    /// lies in its sublayers alone) that has the name, states and parent of a layer of an earlier
+    /// page, which this page doesn't mark itself, is that layer. A document's layers are the
+    /// same on every artboard, and a file of many artboards may write its layers again for each
+    /// page (#951: a book of 100 pages and 14 layers opened with 1400). Two groups of one name on
+    /// the same page stay two layers: when both are new, the one that first marks content (paint
+    /// order) takes the earlier page's layer and the other stays its own. The layer taken may be
+    /// listed anywhere in the catalog (a later page's groups may come first).
     pub fn merge_repeats(&mut self, scan: &mut Scan) {
+        // The groups on the page: each marking group's ancestors (in the layer order) before it,
+        // in the order they first mark content.
         let mut on_page: Vec<usize> = vec![];
         let mut seen = HashSet::new();
         for g in scan.tags.iter().filter_map(|(_, g)| *g) {
-            if seen.insert(g) {
-                on_page.push(g);
+            let mut chain = vec![g];
+            let mut at = g;
+            while let Some(p) = self.list.get(at).and_then(|o| o.parent).filter(|_| chain.len() <= MAX_NESTING) {
+                chain.push(p);
+                at = p;
+            }
+            for a in chain.into_iter().rev() {
+                if seen.insert(a) {
+                    on_page.push(a);
+                }
             }
         }
-        // Parents before their sublayers, so a sublayer compares its parent's layer.
-        on_page.sort_by_key(|g| self.depth(*g));
         let mut marked: HashSet<usize> = on_page.iter().map(|g| self.canonical(*g)).collect();
         for &g in &on_page {
             if self.settled.get(g).copied().unwrap_or(true) || self.canonical(g) != g {
                 continue;
             }
-            let Some(me) = self.list.get(g) else { continue };
-            let parent = self.parent_of(g);
-            let twin =
-                (0..g).filter(|&c| self.canonical(c) == c && self.settled.get(c).copied().unwrap_or(false) && !marked.contains(&c)).find(|&c| {
-                    self.list.get(c).is_some_and(|o| o.name == me.name && o.on == me.on && o.print == me.print && o.locked == me.locked)
-                        && self.parent_of(c) == parent
-                });
+            // The layers of earlier pages made like this one (its parent's layer settled just
+            // before, ancestors coming first), the first not marked on this page: a second new
+            // group of the name on this page finds that one taken and stays its own (paint order
+            // decides, `on_page`'s, not the catalog's).
+            let Some(key) = self.key_of(g) else { continue };
+            let twin = self.layers.get(&key).into_iter().flatten().copied().find(|c| !marked.contains(c));
             if let (Some(c), Some(slot)) = (twin, self.canon.get_mut(g)) {
                 *slot = c;
-                // This page marks that layer now: another group of the name stays its own layer.
                 marked.insert(c);
             }
         }
         for &g in &on_page {
+            if self.settled.get(g).copied().unwrap_or(true) {
+                continue;
+            }
             if let Some(s) = self.settled.get_mut(g) {
                 *s = true;
+            }
+            if self.canonical(g) == g
+                && let Some(key) = self.key_of(g)
+            {
+                self.layers.entry(key).or_default().push(g);
             }
         }
         for g in scan.tags.iter_mut().filter_map(|(_, g)| g.as_mut()) {

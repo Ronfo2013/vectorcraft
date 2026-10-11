@@ -27,7 +27,7 @@ use std::io::Read as _;
 use super::lex::find;
 use crate::ps;
 
-pub use read::{Structure, artboards, read};
+pub use read::{OBJECTS_LEFT_OUT, Structure, artboards, read};
 pub(crate) use read::{slot_frame, slot_of};
 
 #[cfg(test)]

@@ -258,7 +258,7 @@ fn a_file_whose_private_data_cant_be_read_says_why() {
     assert_eq!(names(&s.doc().unwrap().doc.layers), ["Page 1"]);
     // Data without layers.
     let r = open(&mut s, "bare.ai", &ai::ai(&compressed(b"%!PS-Adobe-3.0\n%%EOF\n"), page), json!({})).unwrap();
-    assert!(r["warnings"].to_string().contains("it has no layers"), "{r}");
+    assert!(r["warnings"].as_array().unwrap().contains(&json!(vectorcraft_eps::NO_LAYERS_NOTE)), "{r}");
     // Saved without its PDF part: the reason is the error.
     let e = open(&mut s, "broken.ai", &missing(ai::ai(&compressed(&data), PLACEHOLDER)), json!({})).unwrap_err().to_string();
     assert!(e.contains("private data stream 1"), "{e}");

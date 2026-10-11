@@ -70,7 +70,7 @@ pub use editing::{EDITING_FILE, Editing, LEGACY_EDITING_FILE, editing, editing_w
 pub use encrypt::Encryption;
 pub use export::{export, export_with_report, page_areas};
 pub use import::{OFF_ARTBOARD_NOTE, import, import_with_report};
-pub use pages::{PageInfo, PdfInfo, illustrator_data, illustrator_data_checked, info, is_postscript};
+pub use pages::{PageInfo, PdfInfo, illustrator_data_checked, info, is_postscript};
 pub use post::{THUMBNAIL_SIZE, Thumbnail};
 pub use presets::*;
 pub use print::*;

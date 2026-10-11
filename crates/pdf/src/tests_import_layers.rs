@@ -127,6 +127,79 @@ fn layers_written_again_for_each_page_are_the_same_layers() {
     assert!(printable(&d.layers[0]) && !printable(&d.layers[1]));
 }
 
+/// The groups of a page of `pages` pages: `objs` group dictionaries, listed in the catalog in the
+/// `order` given (an `/Order` array, with `{n}` standing for object n's reference).
+fn layered_file(pages: &[PdfPage], objs: &[String], order: &str) -> Vec<u8> {
+    let first = first_extra(pages.len());
+    let refs: Vec<String> = (0..objs.len()).map(|i| format!("{} 0 R", first + i)).collect();
+    let mut order = order.to_string();
+    for (i, r) in refs.iter().enumerate() {
+        order = order.replace(&format!("{{{i}}}"), r);
+    }
+    let catalog = format!("/OCProperties << /OCGs [{}] /D << /Order [{order}] >> >> ", refs.join(" "));
+    let extra: Vec<&str> = objs.iter().map(String::as_str).collect();
+    pdf_with_catalog(pages, &extra, &catalog, None)
+}
+
+/// A page marking `rgb` in group object `g` of a file of `pages` pages (`g` an index into the
+/// extra objects).
+fn marking(pages: usize, g: usize, rgb: &str) -> PdfPage {
+    PdfPage {
+        resources: format!("/Properties << /MC0 {} 0 R >>", first_extra(pages) + g),
+        ..PdfPage::new(100.0, 100.0, &format!("/OC /MC0 BDC {rgb} rg 10 10 30 30 re f EMC"))
+    }
+}
+
+/// A layer whose art lies in its sublayers alone marks no content itself: written again for a
+/// second page (with its sublayer), it is still one layer with one sublayer (#951's structure:
+/// layers holding sublayers).
+#[test]
+fn a_repeated_layer_holding_only_sublayers_is_one_layer() {
+    let group = |name: &str| format!("<< /Type /OCG /Name ({name}) >>");
+    let objs = ["Shapes", "Sub", "Shapes", "Sub"].map(group).to_vec();
+    // Page 1 marks Sub (object 1) under Shapes (0); page 2 marks its own Sub (3) under its own Shapes (2).
+    let d = import(&layered_file(&[marking(2, 1, "1 0 0"), marking(2, 3, "0 0 1")], &objs, "{0} [{1}] {2} [{3}]")).unwrap();
+    assert_eq!(names(&d), ["Shapes"]);
+    let subs = d.layers[0].children().unwrap();
+    assert_eq!(subs.len(), 1);
+    assert_eq!(subs[0].name.as_deref(), Some("Sub"));
+    assert_eq!(colors(&subs[0]), [Color::rgb(1.0, 0.0, 0.0), Color::rgb(0.0, 0.0, 1.0)], "both pages' art in the one sublayer");
+}
+
+/// The layer a repeated group merges into may be listed after it in the catalog (a later page's
+/// groups written first): every layer of the earlier pages is a candidate, not only earlier ones.
+#[test]
+fn a_repeated_layer_listed_before_the_first_pages_is_merged_too() {
+    let group = |name: &str| format!("<< /Type /OCG /Name ({name}) >>");
+    let objs = ["Shapes", "Notes", "Shapes", "Notes"].map(group).to_vec();
+    // Page 1 uses objects 2 and 3, page 2 objects 0 and 1.
+    let page = |a: usize, b: usize| PdfPage {
+        resources: format!("/Properties << /MC0 {} 0 R /MC1 {} 0 R >>", first_extra(2) + a, first_extra(2) + b),
+        ..PdfPage::new(100.0, 100.0, "/OC /MC0 BDC 1 0 0 rg 10 10 30 30 re f EMC /OC /MC1 BDC 0 0 1 rg 50 50 30 30 re f EMC")
+    };
+    let d = import(&layered_file(&[page(2, 3), page(0, 1)], &objs, "{0} {1} {2} {3}")).unwrap();
+    assert_eq!(names(&d), ["Shapes", "Notes"]);
+    assert_eq!(colors(&d.layers[0]).len(), 2);
+    assert_eq!(colors(&d.layers[1]).len(), 2);
+}
+
+/// When a page marks two new groups of a layer's name, the one that first marks content takes the
+/// layer, whatever their order in the catalog; the other stays its own layer.
+#[test]
+fn of_two_new_groups_of_a_name_the_first_painted_takes_the_layer() {
+    let group = |name: &str| format!("<< /Type /OCG /Name ({name}) >>");
+    let objs = ["Shapes", "Shapes", "Shapes"].map(group).to_vec();
+    // Page 1: object 0, red. Page 2 paints object 2 (blue) before object 1 (green).
+    let second = PdfPage {
+        resources: format!("/Properties << /MC2 {} 0 R /MC1 {} 0 R >>", first_extra(2) + 2, first_extra(2) + 1),
+        ..PdfPage::new(100.0, 100.0, "/OC /MC2 BDC 0 0 1 rg 10 10 30 30 re f EMC /OC /MC1 BDC 0 1 0 rg 50 50 30 30 re f EMC")
+    };
+    let d = import(&layered_file(&[marking(2, 0, "1 0 0"), second], &objs, "{0} {1} {2}")).unwrap();
+    assert_eq!(names(&d), ["Shapes", "Shapes"]);
+    assert_eq!(colors(&d.layers[0]), [Color::rgb(1.0, 0.0, 0.0), Color::rgb(0.0, 0.0, 1.0)], "the first painted joins the layer");
+    assert_eq!(colors(&d.layers[1]), [Color::rgb(0.0, 1.0, 0.0)]);
+}
+
 #[test]
 fn groups_marked_inside_forms_and_clips_reach_their_layers() {
     let (objs, catalog, ids) = groups(1, "/OFF [{B}]");
@@ -434,11 +507,44 @@ fn an_ai_files_private_data_is_its_streams_joined() {
     };
     let (one, two) = (stream("", "%AI24_ZStandard_Data first "), stream("", "second"));
     let ai = pdf_with_catalog(&[page(true)], &[&one, &two], "", None);
-    assert_eq!(illustrator_data(&ai, None).unwrap(), b"%AI24_ZStandard_Data first second");
+    let data = |bytes: &[u8]| illustrator_data_checked(bytes, None).and_then(Result::ok);
+    assert_eq!(data(&ai).unwrap(), b"%AI24_ZStandard_Data first second");
     // A PDF without them has none; neither has bytes that aren't a PDF.
-    assert!(illustrator_data(&pdf_with_catalog(&[page(false)], &[&one, &two], "", None), None).is_none());
-    assert!(illustrator_data(b"not a pdf", None).is_none());
-    // Only a plain or a deflated stream is read: a chain of filters is refused, not run unbounded.
+    assert!(illustrator_data_checked(&pdf_with_catalog(&[page(false)], &[&one, &two], "", None), None).is_none());
+    assert!(illustrator_data_checked(b"not a pdf", None).is_none());
+    // Only a plain or a deflated stream is read: a chain of filters is refused, not run unbounded,
+    // and the refusal says which stream.
     let chained = stream("/Filter [/ASCIIHexDecode /ASCIIHexDecode]", "61>");
-    assert!(illustrator_data(&pdf_with_catalog(&[page(true)], &[&chained, &two], "", None), None).is_none());
+    let why = illustrator_data_checked(&pdf_with_catalog(&[page(true)], &[&chained, &two], "", None), None).unwrap().unwrap_err();
+    assert!(why.contains("stream 1") && why.contains("decoded"), "{why}");
+}
+
+/// Private data streams the numbering skips (1 and 3 without 2), or that don't start at 1, would
+/// leave a hole in the data: the file says which stream is missing rather than reading the rest.
+#[test]
+fn private_data_streams_the_numbering_skips_are_an_error_that_names_them() {
+    let (a, b) = (first_extra(1), first_extra(1) + 1);
+    let page = |entries: String| PdfPage { entries, ..PdfPage::new(100.0, 100.0, "1 0 0 rg 10 10 30 30 re f") };
+    let (one, two) = (stream("", "first "), stream("", "third"));
+    let gap = pdf_with_catalog(
+        &[page(format!("/PieceInfo << /Illustrator << /Private << /AIPrivateData1 {a} 0 R /AIPrivateData3 {b} 0 R >> >> >>"))],
+        &[&one, &two],
+        "",
+        None,
+    );
+    let why = illustrator_data_checked(&gap, None).unwrap().unwrap_err();
+    assert!(why.contains("stream 2 is missing") && why.contains("1 to 2"), "{why}");
+    let late =
+        pdf_with_catalog(&[page(format!("/PieceInfo << /Illustrator << /Private << /AIPrivateData2 {a} 0 R >> >> >>"))], &[&one, &two], "", None);
+    let why = illustrator_data_checked(&late, None).unwrap().unwrap_err();
+    assert!(why.contains("stream 1 is missing"), "{why}");
+    // A stream that isn't one (a missing object) is named too.
+    let lost = pdf_with_catalog(&[page("/PieceInfo << /Illustrator << /Private << /AIPrivateData1 99 0 R >> >> >>".into())], &[&one, &two], "", None);
+    let why = illustrator_data_checked(&lost, None).unwrap().unwrap_err();
+    assert!(why.contains("stream 1"), "{why}");
+    // Empty streams are no data, not an error.
+    let empty = stream("", "");
+    let bare =
+        pdf_with_catalog(&[page(format!("/PieceInfo << /Illustrator << /Private << /AIPrivateData1 {a} 0 R >> >> >>"))], &[&empty, &two], "", None);
+    assert!(illustrator_data_checked(&bare, None).is_none());
 }

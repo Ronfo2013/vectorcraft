@@ -116,7 +116,8 @@ fn a_postscript_ai_that_names_its_prolog_without_including_it_opens_with_its_lay
 /// program.
 #[test]
 fn a_postscript_ai_whose_layers_cant_be_read_says_why() {
-    let damaged = NAMED_PROLOG.replace("0 D\n", "0 D\n1 2 frobnicate\n");
+    // An operator this doesn't know while a path is being built (one between objects is skipped).
+    let damaged = NAMED_PROLOG.replace("0 D\n", "0 D\n10 10 m\n1 2 frobnicate\n");
     let e = import(damaged.as_bytes()).unwrap_err();
     assert!(e.contains("`Adobe_packedarray`") && e.contains("its layers couldn't be read either") && e.contains("`frobnicate`"), "{e}");
 }
