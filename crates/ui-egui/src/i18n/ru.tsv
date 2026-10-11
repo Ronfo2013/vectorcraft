@@ -3350,6 +3350,12 @@ axis	Both	Оба
 @msg	its page has text, and its layers have no text objects to put it in	на его странице есть текст, а на слоях нет текстовых объектов, куда его поместить
 @msg	its type is to come in as outlines, which only its page has	его текст должен прийти в виде контуров, а они есть только на его странице
 @msg	the art on them differs from the page's in {_1}% of it	изображение на слоях отличается от изображения на странице на {_1} % площади
+@msg	it isn't editing data VectorCraft reads	это не данные редактирования, которые читает VectorCraft
+@msg	its `/{kind} X!` object doesn't end	его объект `/{kind} X!` не завершается
+@msg	its private data stream {n} can't be decoded (or the data is larger than {_1} MB)	его поток закрытых данных {n} не удаётся декодировать (или данные больше {_1} МБ)
+@msg	its private data stream {n} isn't a stream that can be read	его поток закрытых данных {n} не является читаемым потоком
+@msg	its private data streams aren't numbered 1 to {keys}: stream {_1} is missing	его потоки закрытых данных пронумерованы не от 1 до {keys}: поток {_1} отсутствует
+@msg	the art on them differs from the page's in {_1}% of artboard {_2}	изображение на слоях отличается от изображения на странице на {_1} % монтажной области {_2}
 @msg	`to` must be "corner" or "smooth"	`to` должно быть "corner" или "smooth"
 @msg	BMP files are RGB or grayscale: colorModel rgb or gray	файлы BMP бывают RGB или в оттенках серого: colorModel rgb или gray
 @msg	Blend colors: select at least three objects with filled colours	Смешивание цветов: выберите не менее трёх объектов с цветными заливками

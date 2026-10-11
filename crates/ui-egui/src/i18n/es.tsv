@@ -3354,6 +3354,12 @@ axis	Both	Ambos
 @msg	its page has text, and its layers have no text objects to put it in	su página tiene texto y sus capas no tienen objetos de texto donde ponerlo
 @msg	its type is to come in as outlines, which only its page has	su texto debe llegar como contornos, y solo su página los tiene
 @msg	the art on them differs from the page's in {_1}% of it	el arte de las capas difiere del de la página en el {_1} % de su superficie
+@msg	it isn't editing data VectorCraft reads	no son datos de edición que VectorCraft lea
+@msg	its `/{kind} X!` object doesn't end	su objeto `/{kind} X!` no termina
+@msg	its private data stream {n} can't be decoded (or the data is larger than {_1} MB)	su flujo de datos privados {n} no se puede decodificar (o los datos superan {_1} MB)
+@msg	its private data stream {n} isn't a stream that can be read	su flujo de datos privados {n} no es un flujo legible
+@msg	its private data streams aren't numbered 1 to {keys}: stream {_1} is missing	sus flujos de datos privados no están numerados de 1 a {keys}: falta el flujo {_1}
+@msg	the art on them differs from the page's in {_1}% of artboard {_2}	el arte de las capas difiere del de la página en el {_1} % de la mesa de trabajo {_2}
 @msg	`to` must be "corner" or "smooth"	`to` debe ser "corner" o "smooth"
 @msg	BMP files are RGB or grayscale: colorModel rgb or gray	los archivos BMP son RGB o en escala de grises: colorModel rgb o gray
 @msg	Blend colors: select at least three objects with filled colours	Fusionar colores: selecciona al menos tres objetos con relleno de color

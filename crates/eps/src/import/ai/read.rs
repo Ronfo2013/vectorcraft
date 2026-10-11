@@ -80,6 +80,9 @@ pub struct Structure {
     pub template: Option<[f64; 4]>,
     /// What layers that don't show have that isn't read (operators, objects): left out of them.
     pub hidden_unread: BTreeSet<String>,
+    /// Operators the reader doesn't know, skipped with their operands on layers that show (state
+    /// the document doesn't model): the importer says whether the page comparison covers them.
+    pub skipped: BTreeSet<String>,
     /// The names of text objects, by their slot's id.
     pub slot_names: HashMap<NodeId, String>,
     pub warnings: Vec<String>,
@@ -265,6 +268,15 @@ struct Reader<'a> {
     unknown: BTreeSet<String>,
     /// What layers that don't show have that this reader doesn't read.
     hidden_unread: BTreeSet<String>,
+    /// Operators the reader doesn't know that were skipped with their operands (state it doesn't
+    /// model), on any layer.
+    skipped: BTreeSet<String>,
+    /// Objects of kinds the reader doesn't read, left out: the kind (`/Mesh`) and how many.
+    unread_objects: std::collections::BTreeMap<String, usize>,
+    /// Inside an object of a kind this doesn't read (`/Kind X!` … `/End X!`): its kind.
+    in_object: Option<String>,
+    /// How many objects are open inside that one (each `/Kind X!` in it, until its `/End X!`).
+    object_depth: usize,
     /// The header's bounding boxes and template box.
     bbox: Option<[f64; 4]>,
     hires: Option<[f64; 4]>,
@@ -356,6 +368,17 @@ const SKIPPED: &[(&str, &str)] = &[
     ("Alternate_Content", "End_Versioned_Content"),
 ];
 
+/// The start of the note for objects of kinds the reader doesn't read, left out of the layers (a
+/// loss: the file has art the document lacks). Seen in Illustrator 30 files: gradient meshes,
+/// written `/Mesh X!`, their nodes as `X#` entries, `/End X!` (#951).
+pub const OBJECTS_LEFT_OUT: &str = "objects of kinds VectorCraft doesn't read from the editing data are left out of the layers";
+/// The start of the note for operators the reader doesn't know, skipped with their operands: state
+/// the document doesn't model, where the page comparison covers the art round them (no loss).
+pub const OPERATORS_SKIPPED: &str = "operators VectorCraft doesn't know were skipped";
+/// The same where the comparison doesn't cover them (no page, art outside every compared
+/// artboard): what they set may be art the document lacks (a loss).
+pub const OPERATORS_SKIPPED_UNCHECKED: &str = "operators VectorCraft doesn't know were skipped where the page comparison doesn't reach";
+
 /// The note for a `/ForeignObject` (non-native art, the content of a placed PDF, which the editor
 /// shows but doesn't edit) whose PDF can't be read.
 pub const NON_NATIVE_ART_UNREAD: &str = "non-native art (a placed PDF's content) that VectorCraft can't read is left out";
@@ -399,6 +422,10 @@ impl<'a> Reader<'a> {
             unsupported: BTreeSet::new(),
             unknown: BTreeSet::new(),
             hidden_unread: BTreeSet::new(),
+            skipped: BTreeSet::new(),
+            unread_objects: Default::default(),
+            in_object: None,
+            object_depth: 0,
             bbox: None,
             hires: None,
             template: None,
@@ -570,7 +597,13 @@ impl<'a> Reader<'a> {
         let read = sub.open(Kind::Group, false).and_then(|()| sub.run());
         self.nodes = sub.nodes;
         self.gradients = std::mem::take(&mut sub.gradients);
-        let whole = read.is_ok() && sub.unsupported.is_empty() && sub.unknown.is_empty() && sub.frames.len() == 1;
+        let whole = read.is_ok()
+            && sub.unsupported.is_empty()
+            && sub.unknown.is_empty()
+            && sub.skipped.is_empty()
+            && sub.unread_objects.is_empty()
+            && sub.in_object.is_none()
+            && sub.frames.len() == 1;
         let (Some(head), Some(frame)) = (sub.pattern.take(), sub.frames.pop()) else { return };
         let Some(tile) = head.tile.filter(|t| whole && sane(*t) && t.width() > 0.0 && t.height() > 0.0 && !frame.children.is_empty()) else {
             return;
@@ -701,7 +734,15 @@ impl<'a> Reader<'a> {
     /// `kids` with the clipping paths among them (indexes `clips`) first, several as one compound
     /// path → the children and whether they clip.
     fn clip_first(&mut self, kids: Vec<Node>, clips: &[usize]) -> (Vec<Arc<Node>>, bool) {
-        let (mut clip, rest): (Vec<Indexed>, Vec<Indexed>) = kids.into_iter().enumerate().partition(|(i, _)| clips.contains(i));
+        // Which children clip, by index (a layer may hold thousands of objects and clips).
+        let mut is_clip = vec![false; kids.len()];
+        for &i in clips {
+            if let Some(c) = is_clip.get_mut(i) {
+                *c = true;
+            }
+        }
+        let (mut clip, rest): (Vec<Indexed>, Vec<Indexed>) =
+            kids.into_iter().enumerate().partition(|(i, _)| is_clip.get(*i).copied().unwrap_or(false));
         let clip_node = match clip.len() {
             0 => None,
             1 => clip.pop().map(|(_, n)| n),
@@ -760,6 +801,37 @@ impl<'a> Reader<'a> {
                 }
                 let items: Vec<V> = self.stack.split_off(at).into_iter().skip(1).collect();
                 return self.push(V::Arr(items));
+            }
+            // `/Kind X!` opens an object of a kind this reader doesn't read, `/End X!` ends it;
+            // between them, its data: `X#` entries, bare arrays and dictionaries, all taken as
+            // nothing (ahead of the dictionary syntax, so a `/Document` in there changes
+            // nothing). An object inside it is its data too, counted by depth so that its end
+            // doesn't end the outer one. The object is left out and counted (a loss the note says).
+            "X!" => {
+                let name = self.operands().iter().rev().find_map(|v| if let V::Name(n) = v { Some(n.clone()) } else { None });
+                match (name.as_deref(), self.in_object.is_some()) {
+                    (Some("End"), true) => {
+                        if self.object_depth > 0 {
+                            self.object_depth -= 1;
+                        } else if let Some(kind) = self.in_object.take() {
+                            *self.unread_objects.entry(kind).or_default() += 1;
+                            self.after_object = false;
+                        }
+                    }
+                    (Some(_), true) => self.object_depth = self.object_depth.saturating_add(1),
+                    (Some(n), false) if n != "End" => self.in_object = Some(n.to_string()),
+                    // `X!` without a kind, or an `/End` that ends nothing: skipped like any other.
+                    _ => {
+                        if self.skipped.len() < 16 {
+                            self.skipped.insert("X!".into());
+                        }
+                    }
+                }
+                return Ok(());
+            }
+            _ if self.in_object.is_some() => {
+                self.operands();
+                return Ok(());
             }
             ":" => return self.begin_obj(hidden),
             "," => {
@@ -906,11 +978,22 @@ impl<'a> Reader<'a> {
             _ if IGNORED.contains(&w) => {}
             // Before the art, the setup runs procedures of the printing format.
             _ if self.frames.is_empty() => {}
+            // An operator this reader doesn't know. Its operands are off the stack (`operands()`
+            // took them), the containers are the known ones, so what it set is skipped and the
+            // file goes on; the importer notes it, as a loss where the page comparison can't
+            // check the art round it (`X#` of Illustrator 30 files, #951). On a layer that
+            // doesn't show nothing checks it: that layer's art counts as unread, as before. While
+            // a path is being built it could paint it, so there it stops the reader instead: the
+            // art would otherwise be drawn wrong.
             _ => {
                 let op: String = w.chars().take(24).collect();
                 if !self.shown() {
                     if self.hidden_unread.len() < 16 {
                         self.hidden_unread.insert(format!("`{op}`"));
+                    }
+                } else if self.path.elements().is_empty() {
+                    if self.skipped.len() < 16 {
+                        self.skipped.insert(op);
                     }
                 } else if self.unknown.len() < 16 {
                     self.unknown.insert(op);
@@ -1502,6 +1585,14 @@ impl<'a> Reader<'a> {
         if self.doc.layers.is_empty() {
             return Err("it has no layers".into());
         }
+        if let Some(kind) = &self.in_object {
+            return Err(format!("its `/{kind} X!` object doesn't end"));
+        }
+        if !self.unread_objects.is_empty() {
+            let kinds: Vec<String> = self.unread_objects.iter().map(|(k, n)| format!("{k}: {n}")).collect();
+            let note = format!("{OBJECTS_LEFT_OUT} ({})", kinds.join(", "));
+            self.warn(&note);
+        }
         let to_doc = self.ensure_space();
         let artboard = self.first_board();
         drop_commented_copies(&mut self.doc.layers, &self.hidden_ids);
@@ -1554,6 +1645,7 @@ impl<'a> Reader<'a> {
             artboard,
             template: self.template,
             hidden_unread: self.hidden_unread,
+            skipped: self.skipped,
             slot_names: self.slot_names,
             warnings,
         })

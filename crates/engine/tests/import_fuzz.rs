@@ -2098,6 +2098,14 @@ proptest! {
             bytes.truncate(cut.max(4));
             let file = ai::ai(&bytes, ai::page_pdf());
             survive(what, || vectorcraft_engine::cmd::fileio::load("x.ai", &file).ok().map(|l| l.doc))?;
+            // The file round the private data damaged too (its streams, their numbering, the
+            // page's dictionary): the reader of the streams says why they can't be read.
+            let mut wrapper = ai::ai(sample, ai::page_pdf());
+            for &(at, b) in &edits {
+                let n = wrapper.len();
+                wrapper[at % n] = b;
+            }
+            survive(what, || vectorcraft_engine::cmd::fileio::load("x.ai", &wrapper).ok().map(|l| l.doc))?;
             let file = ai::eps(&bytes, ai::page_ps());
             survive(what, || vectorcraft_engine::cmd::fileio::load("x.eps", &file).ok().map(|l| l.doc))?;
         }

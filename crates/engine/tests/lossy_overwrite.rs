@@ -21,8 +21,9 @@ fn ascii85(data: &[u8]) -> String {
     out
 }
 
-/// A square drawn with an operator the layers' reader doesn't know and flat on the page: the file
-/// comes in as its page, and its hidden layer is left out.
+/// A square after an operator the layers' reader doesn't know, and flat on the page: the layers
+/// are read with the operator skipped, which the page (read by VectorCraft's own interpreter)
+/// can't show to be harmless, so the import counts as having left something out.
 fn lossy_eps() -> Vec<u8> {
     let layer = |name: &str, visible: u8, body: &str| {
         format!("%AI5_BeginLayer\n{visible} 1 1 1 0 0 1 0 79 128 255 0 50 0 Lb\n({name}) Ln\n{body}\nLB\n%AI5_EndLayer--\n")
@@ -55,7 +56,10 @@ fn a_file_the_import_left_things_out_of_is_not_written_over_unasked() {
     std::fs::write(&src, &original).unwrap();
     let mut s = Session::new();
     let opened = s.execute("document.open", &json!({ "path": src.to_string_lossy() })).unwrap();
-    assert!(opened["warnings"].to_string().contains("layers weren't read"), "{opened}");
+    // The operator is skipped and the layers read; an EPS's page can't show what it set wasn't
+    // art, so the import left something out: a loss note.
+    let notes: Vec<String> = opened["warnings"].as_array().unwrap().iter().filter_map(|w| w.as_str().map(str::to_string)).collect();
+    assert!(notes.iter().any(|w| w.contains("`Zq`") && vectorcraft_eps::is_loss(w)), "{opened}");
 
     // Over the same file: refused, and the file is as it was.
     let e = s.execute("document.export", &json!({ "path": src.to_string_lossy(), "format": "eps" })).unwrap_err().to_string();
