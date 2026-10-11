@@ -8,7 +8,7 @@ use vectorcraft_color::{BlendMode, GradientKind, GradientPaint, Paint};
 use vectorcraft_doc::{
     AppearanceItem, Document, FillLayer, LineCap, LineJoin, Node, NodeId, NodeKind, StrokeAlign, StrokeLayer, TextKind, TextObject,
 };
-use vectorcraft_doc::{CharStyle, ImageBlob, Justify};
+use vectorcraft_doc::{CharStyle, ImageBlob, Justify, Unit};
 use vectorcraft_effects::stroke::{self, Written, WrittenShape};
 use vectorcraft_geom::{Affine, BezPath, FillRule, PathData, Point, Rect};
 
@@ -33,6 +33,26 @@ pub(crate) fn export(doc: &Document, opts: &ExportOptions, native: Option<&[u8]>
     let plain = write(doc, opts, native, "");
     let prefix = format!("u{:010x}-", fnv1a(plain.svg.as_bytes()) & 0xff_ffff_ffff);
     write(doc, opts, native, &prefix)
+}
+
+/// The root `width`/`height` of `pt` points in the document's units `unit`, so the units survive
+/// a round trip (#864): a length with a unit identifier (SVG 1.1 §7.10, `width="210mm"`), the
+/// `viewBox` staying in user units (points, as the model is). Pixels are unitless, as the web
+/// writes them (a user unit is a CSS px); the units SVG has no name for (feet, yards, metres)
+/// write the nearest it has. Written with enough decimals for the size to come back as it was.
+fn root_length(pt: f64, unit: Unit, decimals: u8) -> String {
+    let (suffix, per) = match unit {
+        Unit::Pixels => return fmt_num(pt, decimals),
+        Unit::Points => ("pt", 1.0),
+        Unit::Picas => ("pc", Unit::Picas.points()),
+        Unit::Inches | Unit::Feet | Unit::FeetInches | Unit::Yards => ("in", Unit::Inches.points()),
+        Unit::Millimeters => ("mm", Unit::Millimeters.points()),
+        Unit::Centimeters | Unit::Meters => ("cm", Unit::Centimeters.points()),
+    };
+    // At least three decimals, and one more per decade the unit is bigger than a point, so the
+    // size converts back to within a thousandth of a point whatever the content's precision.
+    let extra = per.log10().ceil().clamp(0.0, 4.0) as u8;
+    format!("{}{suffix}", fmt_num(pt / per, decimals.max(3).saturating_add(extra).min(7)))
 }
 
 fn write(doc: &Document, opts: &ExportOptions, native: Option<&[u8]>, id_prefix: &str) -> Output {
@@ -103,7 +123,8 @@ fn write(doc: &Document, opts: &ExportOptions, native: Option<&[u8]>, id_prefix:
         out.push_str(" version=\"1.2\" baseProfile=\"tiny\"");
     }
     if !opts.responsive {
-        out.push_str(&format!(" width=\"{ww}\" height=\"{hh}\""));
+        let (rw, rh) = (root_length(rect.width(), doc.units, opts.decimals), root_length(rect.height(), doc.units, opts.decimals));
+        out.push_str(&format!(" width=\"{rw}\" height=\"{rh}\""));
     }
     out.push_str(&format!(" viewBox=\"0 0 {ww} {hh}\">{nl}"));
     let css = opts.styling == Styling::InternalCss && !w.classes.is_empty();

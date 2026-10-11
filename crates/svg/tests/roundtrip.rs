@@ -503,7 +503,8 @@ fn options_decimals_minify_responsive_artboard() {
     assert!(s.contains("viewBox=\"0 0 200 100\""), "{s}");
     assert!(s.contains("M10.12 20"), "{s}");
     let s = export(&d, &ExportOptions::default());
-    assert!(s.contains("width=\"200\" height=\"100\"") && s.contains("M10.123 20"), "{s}");
+    // The root size carries the document units (points here, #864); the viewBox stays in points.
+    assert!(s.contains("width=\"200pt\" height=\"100pt\"") && s.contains("viewBox=\"0 0 200 100\"") && s.contains("M10.123 20"), "{s}");
     // All art bounds: the rectangle and half its 1 pt stroke (right-angle miters stay inside).
     let s = export(&d, &ExportOptions { artboard: None, ..Default::default() });
     assert!(s.contains("viewBox=\"0 0 40.877 31\""), "{s}");
