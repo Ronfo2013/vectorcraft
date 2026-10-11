@@ -95,28 +95,46 @@ fn mid(segs: &[Seg]) -> Option<Point> {
 }
 
 /// The inputs' segments (in the sweep's frame), to tell which inputs an edge lies on.
+///
+/// Asked once per edge of the map, so a scan of every segment each time made the map quadratic
+/// in the input (#937: past a few thousand segments the Shape Builder gave up on open paths).
+/// The segments are sorted by the left edge of their bounds, so those whose bounds can hold a
+/// point are one short run of them; the few widest (at most about √n: a long line across the art
+/// would otherwise stretch every run to the whole list) are kept apart and scanned.
 struct Outlines {
-    segs: Vec<(kurbo::Rect, PathSeg, usize)>,
+    small: Vec<(kurbo::Rect, PathSeg, usize)>,
+    max_width: f64,
+    wide: Vec<(kurbo::Rect, PathSeg, usize)>,
     tol: f64,
 }
 
 impl Outlines {
     fn new(inputs: &[(BezPath, usize)], eps: f64) -> Self {
         // A zero-length segment (a point) is the source of no edge, even one running through it.
-        let segs = inputs
+        let mut segs: Vec<(kurbo::Rect, PathSeg, usize)> = inputs
             .iter()
             .flat_map(|(bp, i)| bp.segments().map(move |s| (s.bounding_box(), s, *i)))
             .filter(|(r, ..)| r.width() > 0.0 || r.height() > 0.0)
             .collect();
+        segs.sort_by(|a, b| a.0.width().total_cmp(&b.0.width()));
+        let n_wide = ((segs.len() as f64).sqrt().ceil() as usize).min(segs.len());
+        let wide = segs.split_off(segs.len() - n_wide);
+        segs.sort_by(|a, b| a.0.x0.total_cmp(&b.0.x0));
+        let max_width = segs.iter().map(|(r, ..)| r.width()).fold(0.0, f64::max);
         // The sweep moves points by a few `eps` at most.
-        Self { segs, tol: 16.0 * eps }
+        Self { small: segs, max_width, wide, tol: 16.0 * eps }
     }
 
     /// The front-most input whose outline passes through `p`.
     fn source_at(&self, p: Point) -> Option<usize> {
         use kurbo::ParamCurveNearest;
         let tol = self.tol;
-        self.segs.iter().filter(|(r, s, _)| r.inflate(tol, tol).contains(p) && s.nearest(p, 1e-9).distance_sq <= tol * tol).map(|(_, _, i)| *i).max()
+        let lo = self.small.partition_point(|(r, ..)| r.x0 < p.x - tol - self.max_width);
+        let run = self.small.get(lo..).unwrap_or_default().iter().take_while(|(r, ..)| r.x0 <= p.x + tol);
+        run.chain(&self.wide)
+            .filter(|(r, s, _)| r.inflate(tol, tol).contains(p) && s.nearest(p, 1e-9).distance_sq <= tol * tol)
+            .map(|(_, _, i)| *i)
+            .max()
     }
 }
 
@@ -189,27 +207,29 @@ fn origin(edges: &[Edge], h: usize) -> Option<usize> {
 /// they start out (tangent curves, or the sweep's short straight stubs at a vertex).
 fn leaving_angle(edges: &[Edge], h: usize, v: Point, r: f64) -> f64 {
     let segs = half_segs(edges, h);
-    let mut bp = BezPath::new();
-    for (k, s) in segs.iter().enumerate() {
-        if k == 0 {
-            bp.move_to(s.c.p0);
-        }
-        bp.curve_to(s.c.p1, s.c.p2, s.c.p3);
-    }
     let mut prev = segs.first().map_or(v, |s| s.c.p0);
     let mut hit: Option<Point> = None;
-    kurbo::flatten(bp.iter(), (r * 1e-4).max(1e-12), |el| {
-        if let (None, kurbo::PathEl::LineTo(p)) = (hit, el) {
-            if p.distance(v) >= r {
-                // The point on prev → p at distance r (prev is closer).
-                let (d, f) = (p - prev, prev - v);
-                let (a, b, c) = (d.hypot2(), 2.0 * f.dot(d), f.hypot2() - r * r);
-                let t = if a > 0.0 { ((-b + (b * b - 4.0 * a * c).max(0.0).sqrt()) / (2.0 * a)).clamp(0.0, 1.0) } else { 1.0 };
-                hit = Some(prev + d * t);
+    // One segment at a time, stopping at the first that gets r away: an edge can run on for
+    // thousands of segments (a traced outline between two crossings), all of which flattening
+    // the whole edge to this tolerance would visit, at every vertex.
+    for s in &segs {
+        let path = [kurbo::PathEl::MoveTo(s.c.p0), kurbo::PathEl::CurveTo(s.c.p1, s.c.p2, s.c.p3)];
+        kurbo::flatten(path, (r * 1e-4).max(1e-12), |el| {
+            if let (None, kurbo::PathEl::LineTo(p)) = (hit, el) {
+                if p.distance(v) >= r {
+                    // The point on prev → p at distance r (prev is closer).
+                    let (d, f) = (p - prev, prev - v);
+                    let (a, b, c) = (d.hypot2(), 2.0 * f.dot(d), f.hypot2() - r * r);
+                    let t = if a > 0.0 { ((-b + (b * b - 4.0 * a * c).max(0.0).sqrt()) / (2.0 * a)).clamp(0.0, 1.0) } else { 1.0 };
+                    hit = Some(prev + d * t);
+                }
+                prev = p;
             }
-            prev = p;
+        });
+        if hit.is_some() {
+            break;
         }
-    });
+    }
     // An edge too short to reach r (it can't, r is at most half of every chord) leaves along its
     // tangent.
     let far =
@@ -307,9 +327,11 @@ pub fn live_paint(shapes: &[Shape]) -> (Vec<Region>, Vec<Shape>) {
     build(shapes).unwrap_or_default()
 }
 
-/// Most segments the Shape Builder sweeps with open paths as edges: the planar map costs far more
-/// than the filled areas' arrangement, so past this only the filled areas count.
-pub const SHAPE_BUILDER_MAX_SEGMENTS: usize = 4096;
+/// Most segments the Shape Builder sweeps with open paths as edges; past this only the filled
+/// areas count. The map costs about what the filled areas' arrangement does (both linear in the
+/// input; the cap was 4096 while finding each edge's source scanned every segment, #937), so this
+/// only bounds the time a hover can take on art far past what a drawing holds.
+pub const SHAPE_BUILDER_MAX_SEGMENTS: usize = 65_536;
 
 /// The Shape Builder's arrangement: see [`shape_builder`].
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -485,8 +507,10 @@ pub(crate) struct Map {
     edges: Vec<Edge>,
     around: Vec<Vec<usize>>,
     slot_of: Vec<usize>,
-    /// Bounded faces: their cycle of half-edges, path and area.
+    /// Bounded faces: their cycle of half-edges, path and area; and their bounds, so finding the
+    /// face around a point tests only the faces that can hold it.
     faces: Vec<(Vec<usize>, BezPath, f64)>,
+    face_bounds: Vec<kurbo::Rect>,
     /// Outer boundaries of connected pieces, and the face each one is a hole in.
     holes: Vec<(Vec<usize>, BezPath)>,
     face_holes: Vec<Vec<usize>>,
@@ -658,15 +682,17 @@ pub(crate) fn map(shapes: &[Shape]) -> Option<Map> {
     }
 
     // Each hole goes in the smallest face of another piece around it.
+    let face_bounds: Vec<kurbo::Rect> = faces.iter().map(|(_, bp, _)| bp.bounding_box()).collect();
     let mut face_holes: Vec<Vec<usize>> = vec![Vec::new(); faces.len()];
     for (k, (cycle, _)) in holes.iter().enumerate() {
         let Some(p) = cycle.first().and_then(|&h| origin(&edges, h)).and_then(|v| points.get(v)).copied() else { continue };
         let own = piece_of(cycle);
         let around_it = faces
             .iter()
+            .zip(&face_bounds)
             .enumerate()
-            .filter(|(_, (fc, bp, _))| piece_of(fc) != own && bp.bounding_box().contains(p) && bp.winding(p) != 0)
-            .min_by(|a, b| a.1.2.total_cmp(&b.1.2))
+            .filter(|(_, ((fc, bp, _), bb))| bb.contains(p) && piece_of(fc) != own && bp.winding(p) != 0)
+            .min_by(|a, b| a.1.0.2.total_cmp(&b.1.0.2))
             .map(|(i, _)| i);
         if let Some(list) = around_it.and_then(|i| face_holes.get_mut(i)) {
             list.push(k);
@@ -677,7 +703,7 @@ pub(crate) fn map(shapes: &[Shape]) -> Option<Map> {
     let snap = 2.0 * eps;
     let mut anchors: Vec<Point> = shapes.iter().flat_map(|s| s.path.subpaths.iter().flat_map(|sp| sp.anchors.iter().map(|a| a.p))).collect();
     anchors.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
-    Some(Map { edges, around, slot_of, faces, holes, face_holes, tidy, anchors, snap })
+    Some(Map { edges, around, slot_of, faces, face_bounds, holes, face_holes, tidy, anchors, snap })
 }
 
 impl Map {
@@ -702,9 +728,10 @@ impl Map {
             let (i, _) = self
                 .faces
                 .iter()
+                .zip(&self.face_bounds)
                 .enumerate()
-                .filter(|(_, (_, bp, _))| bp.bounding_box().contains(q) && bp.winding(q) != 0)
-                .min_by(|a, b| a.1.2.total_cmp(&b.1.2))?;
+                .filter(|(_, ((_, bp, _), bb))| bb.contains(q) && bp.winding(q) != 0)
+                .min_by(|a, b| a.1.0.2.total_cmp(&b.1.0.2))?;
             *picked.get_mut(i)? = true;
         }
         let merged = |h: usize| face_of.get(h).copied().flatten().is_some_and(|f| picked.get(f) == Some(&true));
@@ -1163,6 +1190,36 @@ mod tests {
         s.push(line((0.0, 0.0), (1.0, 1.0), 2));
         s[0].path.subpaths[0].anchors.extend((0..16).map(|k| vectorcraft_geom::Anchor::corner(Point::new(100.0, f64::from(k)))));
         assert!(shape_builder(&s, false).lines.is_empty());
+    }
+
+    #[test]
+    fn a_traced_outline_of_many_segments_is_cut_by_lines() {
+        // #937: art traced to thousands of segments was past the old cap (4096), so lines stopped
+        // cutting it and the Shape Builder offered the whole shapes. A blob of 20 000 segments
+        // crossed by two long lines (far wider than any of its segments: the index of the
+        // outlines keeps those apart) splits into four regions, each line in four pieces.
+        let n = 20_000;
+        let blob: Vec<Point> = (0..n)
+            .map(|k| {
+                let t = k as f64 / n as f64 * std::f64::consts::TAU;
+                let r = 100.0 + 5.0 * (t * 37.0).sin();
+                Point::new(r * t.cos(), r * t.sin())
+            })
+            .collect();
+        let s = [
+            Shape::new(PathData::single(SubPath::polyline(&blob, true)), FillRule::NonZero, 0),
+            line((-150.0, 0.0), (150.0, 3.0), 1),
+            line((0.0, -150.0), (3.0, 150.0), 2),
+        ];
+        let started = std::time::Instant::now();
+        let BuilderArrangement { regions, lines, .. } = shape_builder(&s, false);
+        assert_eq!(regions.len(), 4, "{}", regions.len());
+        assert!(regions.iter().all(|r| r.sources == [0]));
+        let whole = crate::area(&s[0].path, FillRule::NonZero);
+        assert!((regions.iter().map(area).sum::<f64>() - whole).abs() < 1e-6 * whole);
+        assert_eq!(lines.iter().filter(|l| l.key == 1).count(), 4, "cut twice by the blob and once by the other line");
+        assert_eq!(lines.iter().filter(|l| l.key == 2).count(), 4);
+        assert!(started.elapsed().as_secs_f64() < 5.0, "{:?}", started.elapsed());
     }
 
     fn poly(pts: &[(f64, f64)], closed: bool) -> SubPath {
