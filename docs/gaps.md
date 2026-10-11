@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every known shortfall against Illustrator, one entry each, **ranked by how much it stops a professional from
 switching**. This is the work list: unless you were given a task, pick the highest-ranked gap you can make
@@ -45,7 +45,11 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 - **Missing:** a tool-by-tool, panel-by-panel pass over modifiers, cursors, the Properties panel per context,
   isolation mode and small behaviours, against the public tool and shortcut documentation. Itemized in
-  [ui-parity.md](ui-parity.md). The Shaper's construction-mode widget and gesture refinements remain.
+  [ui-parity.md](ui-parity.md). The Shaper's construction-mode widget and gesture refinements remain. Done so
+  far (2026-10-11): the shortcut reference's "Work with selections" and "Edit shapes" rows for the selection
+  tools, Scissors, Pencil and Knife (Alt swaps Direct and Group Selection, Shift-click subtracts segments and
+  grouped objects, Scissors/Pencil/Knife Alt); still open from those tables: E during a Selection marquee,
+  Space moving the zoom marquee.
 - **Evidence:** no side-by-side session has ever happened (the clean-room rule forbids running Illustrator, so
   the pass works from the documentation); users keep reporting small differences: #991, #975, #973, #955, #908.
 - **Impact:** a power user notices this in the first minutes and stops trusting the tool.
