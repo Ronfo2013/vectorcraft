@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; earlier: G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every known shortfall against Illustrator, one entry each, **ranked by how much it stops a professional from
 switching**. This is the work list: unless you were given a task, pick the highest-ranked gap you can make
@@ -45,7 +45,11 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 - **Missing:** a tool-by-tool, panel-by-panel pass over modifiers, cursors, the Properties panel per context,
   isolation mode and small behaviours, against the public tool and shortcut documentation. Itemized in
-  [ui-parity.md](ui-parity.md). The Shaper's construction-mode widget and gesture refinements remain.
+  [ui-parity.md](ui-parity.md). The Shaper's construction-mode widget and gesture refinements remain. Done so
+  far (2026-10-11): the shortcut reference's "Work with selections" and "Edit shapes" rows for the selection
+  tools, Scissors, Pencil and Knife (Alt swaps Direct and Group Selection, Shift-click subtracts segments and
+  grouped objects, Scissors/Pencil/Knife Alt); still open from those tables: E during a Selection marquee,
+  Space moving the zoom marquee.
 - **Evidence:** no side-by-side session has ever happened (the clean-room rule forbids running Illustrator, so
   the pass works from the documentation); users keep reporting small differences: #991, #975, #973, #955, #908.
 - **Impact:** a power user notices this in the first minutes and stops trusting the tool.
@@ -88,13 +92,16 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 - **Done:** scaled text's size and horizontal-scale controls account for object/group transforms (#1034),
   including exact sizes across grouped labels and resetting horizontal stretch while keeping editable text.
+  Shape Builder regions on art of more than 4096 segments (traced or type outlines): the planar map no longer
+  gives up there, so lines cut such art instead of the tool offering whole shapes (the reproduced case of #937;
+  the map's cost was quadratic in the segments, now linear, and its cap is 65 536).
   SVG files keep the document's units (#864): the root `width`/`height` carry them (`width="210mm"`), so a
   document in millimetres, inches, picas or points saved as SVG, or converted with `vectorcraft-cli convert`,
   opens again in those units at the same artboard size (pixels stay unitless).
   Bezier drag previews no longer freeze (#834): a Pen, Anchor Point or Direct Selection drag gets every
   position the pointer is seen at, including the one after it left the window and came back and the one in
   the frame it lets go, so what the release commits is where the pointer let go.
-- **Missing:** Shape Builder misses planar regions and targets whole shapes (#937); Transform effect dialog's invisible checkboxes and missing options (#885);
+- **Missing:** Shape Builder on the reporter's own file (#937, until confirmed on it); Transform effect dialog's invisible checkboxes and missing options (#885);
   PDF text boxes moving on open (#722).
 - **Impact:** wrong output in everyday work.
 - **Estimate:** 8–15 h.
@@ -211,6 +218,7 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 |---|---|---|
 | 2026-10-11 | minor | G11: #834 fixed (a tool drag's preview skipped the pointer position in the frame it came back into the window, and the move in the release's frame, so a handle or anchor stayed behind until the next move and the release committed the stale shape); estimate unchanged |
 | 2026-10-11 | minor | G11: #864 fixed (SVG saves wrote unitless sizes, so a document in mm/in/pt reopened in pixels); estimate unchanged |
+| 2026-10-11 | minor | G11: Shape Builder on art of thousands of segments (traced outlines, type outlines): lines cut it again past 4096 segments, where the planar map used to give up and the tool offered whole shapes (#937's reproduced case; the map's edge-source lookup was quadratic, now indexed, and the cap is 65 536); estimate unchanged until confirmed on the reporter's file |
 | 2026-10-11 | minor | G4: proportional vertical metrics (#966) done; estimate unchanged |
 | 2026-10-11 | minor | G11: #893 fixed (merged regions of crossing lines left seams); #937 still open, estimate unchanged |
 | 2026-10-11 | minor | #1034: corrected scaled type controls; optional group font-size preservation remains separate. Estimates unchanged at this rounding. |

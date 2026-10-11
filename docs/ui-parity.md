@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (bezier drag previews follow the pointer back into the window and to the release, #834; units survive an SVG save, #864; earlier: a marquee needs to touch a path, not just lie inside its fill, #1103; Live Corners round corners between curved sides, #1144) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (bezier drag previews follow the pointer back into the window and to the release, #834; units survive an SVG save, #864; G1: Alt swaps Direct and Group Selection, Shift-click subtracts segments and grouped objects, Scissors/Pencil/Knife Alt behaviours from the shortcut reference; earlier: a marquee needs to touch a path, #1103) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft's tools, handles, snapping and panels behave next to Illustrator's. A vector illustrator's
 trust is in the details: where a handle lands, what Shift and Alt do mid-drag, what a smart guide snaps to,
@@ -23,7 +23,7 @@ forbids launching or measuring Illustrator, so there has been **no side-by-side 
 | Smart guides and snapping | 70% | 8–12 | estimated |
 | Transform handles, bounding box, Free Transform | 80% | 5–8 | estimated |
 | Nudging, numeric entry, precision, units | 85% | 3–5 | estimated |
-| Modifier keys and temporary tools | 80% | 5–8 | estimated |
+| Modifier keys and temporary tools | 85% | 4–7 | estimated; the selection and shape-editing rows of the shortcut reference checked 2026-10-11 |
 | Keyboard shortcuts (default set) | 70% | 6–10 | estimated |
 | Cursors | 75% | 3–5 | estimated |
 | Panels, Control bar, Properties, context menus | 70% | 15–25 | estimated |
@@ -53,7 +53,7 @@ tools, never checked side by side) isn't captured row by row.
 | Each anchor snaps to Smart Guides and construction angles | done | `DrawSnap` |
 | Curvature tool: click/drag points, double-click or Alt-click for a corner, temporary Direct Selection, point conversion | partial | modifiers requested in #975 |
 | Add/Delete/Anchor Point tools; Anchor Point tool drags segments to reshape | done | |
-| Pencil: Fidelity, Keep selected, Alt to Smooth, edit selected paths, close by proximity | partial | Keep selected and Alt to Smooth are missing |
+| Pencil: Fidelity, Keep selected, Alt to Smooth, edit selected paths, close by proximity | partial | Keep selected is missing; Alt to Smooth: see Modifier keys |
 | Join tool scrubbing, Average, Join with corner/smooth choice | done | |
 | Simplify (slider, auto, corner angle threshold) | done | |
 
@@ -65,6 +65,8 @@ tools, never checked side by side) isn't captured row by row.
 | A marquee selects the objects whose paths it touches (anchors or segments): drawn inside a filled shape, over a background, it leaves that shape (Preview and Outline) | done | #1103 |
 | Drag a curved segment to bend it, a straight one to move its anchors | done | |
 | Drag by an anchor of a path selected whole moves the whole path; Alt-drag by an anchor or a segment copies it, Alt toggles the copy during the drag, and the copy snaps by the anchor pressed, onto the original too | done | #1104 |
+| Alt switches between Direct Selection and Group Selection: with Alt, Direct Selection picks the whole path by an anchor or a segment, then each click adds the next enclosing group (stopping at the isolated container); Group Selection with Alt picks and highlights anchors | done | [shortcut reference › Work with selections](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html), [Select object groups](https://helpx.adobe.com/illustrator/desktop/manage-objects/select-objects/select-object-groups-and-nested-object-groups.html); `direct.rs` `alt_swaps_direct_selection_and_group_selection` |
+| Shift-click subtracts: a segment Shift-clicked with Direct Selection joins the selection (its two anchors) or, selected, leaves it, the rest staying; Group Selection's Shift-click on a selected object (or its selected group) takes it out on release, a Shift-drag moving it instead | done | [shortcut reference › Work with selections](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html); `shift_click_a_segment_adds_it_to_the_selection_or_takes_it_out`, `shift_click_with_group_selection_takes_the_object_out_on_release` |
 | Handles shown are the handles that drag; tolerance from Selection & Anchor Display | done | #494 |
 | Drag a handle with Shift (45° about its anchor), Alt (move one handle alone) | done | handles snap to smart guides; handle and anchor drags no longer stall when the pointer leaves and re-enters the window (#834) |
 | Show handles when multiple anchors are selected; Highlight anchors on mouse over; anchor and handle size | done | Preferences › Selection & Anchor Display |
@@ -125,13 +127,19 @@ tools, never checked side by side) isn't captured row by row.
 | Behaviour | Status | Notes |
 |---|---|---|
 | Space: Hand; Cmd+Space / Cmd+Alt+Space: zoom in/out; middle button pans | done | |
-| Cmd/Ctrl: last-used selection tool; Cmd+Alt: Group Selection inside Direct Selection | partial | |
+| Cmd/Ctrl: last-used selection tool; Cmd+Alt: Group Selection inside Direct Selection (and Direct Selection inside Group Selection) | done | the lent Direct Selection tool gets Alt and presses as Group Selection (`direct.rs`); [shortcut reference › Work with selections](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html) |
+| Scissors: Alt is the Add Anchor Point tool | done | [shortcut reference › Edit shapes](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html); `anchor.rs` `scissors_with_alt_add_an_anchor` |
+| Pencil: Alt is the Smooth tool (Pencil Tool Options → Alt key toggles to Smooth Tool, `altSmooth`, on by default), smoothing with the Smooth tool's own Fidelity | done | [shortcut reference › Edit shapes](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html); `gesture.rs` `pencil_with_alt_smooths_when_the_option_is_on`, `tests_draw2.rs` `pencil_borrows_the_smooth_tools_fidelity`; checkbox in `dialogs/freehand.rs` |
+| Knife: Alt-drag cuts a straight line, Shift+Alt at 45°/90° | done | [shortcut reference › Edit shapes](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html); `knife_with_alt_cuts_straight_and_shift_holds_it_to_45_degrees` |
+| Selection tool marquee: E while dragging selects only the objects completely inside | missing | [shortcut reference › Work with selections](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html); needs a letter `ToolKey` routed past the tool shortcuts (E is Free Transform) |
+| Zoom tool: Space moves the zoom marquee while dragging | missing | [shortcut reference › View artwork](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html); `canvas.rs` `Drag::ZoomBox` |
+| Lasso: Caps Lock turns the pointer into a cross hair | n/a | the Lasso's pointer is a cross hair already |
 | Alt-drag duplicates (objects, artboards with their art) | done | |
 | Shift-click selects several artboards (Artboard tool, Artboards panel); they move, Alt-copy and delete together | done | `artboard.move`/`artboard.delete` `indices` (#1139) |
 | Shape tools: Shift constrains, Alt from centre, Space moves while dragging, arrows change sides/points/rows | done | |
 | Tool double-click opens its options | done | |
 | Per-platform mapping (Cmd ↔ Ctrl, Option ↔ Alt) | done | |
-| Every tool's modifiers checked against the shortcut reference | missing | this is the fidelity pass |
+| Every tool's modifiers checked against the shortcut reference | partial | the selection, anchor, Scissors, Pencil and Knife rows of the reference's "Work with selections" and "Edit shapes" tables are checked (2026-10-11); the drawing, type, Symbolism, Shape Builder and perspective rows remain |
 
 ## Keyboard shortcuts
 
@@ -172,6 +180,7 @@ re-measure of the panels added since.
 |---|---|---|
 | 2026-10-11 | minor | Pen, Anchor Point and Direct Selection drags: the preview gets every pointer position, including after the pointer re-enters the window and the move in the release's frame (#834); score unchanged (estimated) |
 | 2026-10-11 | minor | Units: a document saved as SVG reopens in its own units (#864); score unchanged (estimated) |
+| 2026-10-11 | minor | G1 modifier pass over the shortcut reference's selection and shape-editing rows: Alt swaps Direct and Group Selection (Cmd+Alt lends Group Selection), Shift-click a segment adds or subtracts it, Group Selection's Shift-click subtracts, Scissors Alt adds an anchor, Pencil Alt smooths (option), Knife Alt cuts straight (Shift: 45°); two rows found missing (E during a marquee, Space moving the zoom marquee); Modifier keys score 80% → 85% (estimated) |
 | 2026-10-11 | minor | A marquee inside a filled shape no longer selects it: only touching its path does (#1103); score unchanged (estimated) |
 | 2026-10-11 | minor | Live Corners: corners between curved sides round too, the curve trimmed to what the cut leaves (#1144); score unchanged (estimated) |
 | 2026-10-11 | minor | Artboards: Shift-click selects several, which move, copy and delete together (#1139); score unchanged (estimated) |

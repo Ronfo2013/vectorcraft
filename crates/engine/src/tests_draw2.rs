@@ -116,6 +116,27 @@ fn pencil_alt_closes_path() {
     assert!(ps[0].1.is_closed());
 }
 
+/// The Pencil's Alt strokes (the Smooth tool's gesture) use the Smooth tool's saved Fidelity
+/// (`settings::BORROWS`): set on the Smooth tool, it reaches the Pencil when it is made and while
+/// it is active; the Pencil never writes it back.
+#[test]
+fn pencil_borrows_the_smooth_tools_fidelity() {
+    let mut s = session();
+    let v = view();
+    let smooth = |s: &mut Session, f: f64| s.set_tool_options(Some("smooth"), json!({"fidelity": f}).as_object().unwrap());
+    smooth(&mut s, 7.0);
+    s.select_tool("pencil", v).unwrap();
+    assert_eq!(s.tool_options_of("pencil")["smoothFidelity"], 7.0, "read when the Pencil is made");
+    assert_eq!(s.tool_options_of("pencil")["fidelity"], 1.5, "its own Fidelity is its own");
+    smooth(&mut s, 4.0);
+    assert_eq!(s.tool_options_of("pencil")["smoothFidelity"], 4.0, "and while it is active");
+    // The Pencil's own Fidelity leaves the Smooth tool's alone.
+    s.set_tool_options(None, json!({"fidelity": 9.0}).as_object().unwrap());
+    s.select_tool("selection", v).unwrap();
+    assert_eq!(s.tool_options_of("smooth")["fidelity"], 4.0);
+    assert_eq!(s.tool_options_of("pencil")["fidelity"], 9.0);
+}
+
 #[test]
 fn pencil_continues_selected_open_path() {
     let mut s = session();

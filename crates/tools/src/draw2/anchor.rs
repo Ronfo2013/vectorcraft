@@ -5,7 +5,7 @@
 //! Anchor Point: click a smooth anchor → corner; drag an anchor → pull out smooth handles; drag a
 //! handle → move it independently (Shift: at 45° steps round its anchor); drag a segment → reshape
 //! the curve.
-//! Scissors: click a path to split it there.
+//! Scissors: click a path to split it there (Alt = add an anchor).
 
 use serde_json::json;
 use vectorcraft_doc::NodeId;
@@ -79,6 +79,10 @@ impl Tool for AnchorTool {
                 }
             }
             ("scissors", PointerKind::Down) => {
+                // Alt: the Add Anchor Point tool (the shortcut reference, "Edit shapes").
+                if ev.mods.alt {
+                    return Self::add(cx, p);
+                }
                 if let Some((id, si, ai)) = hit_anchor(cx, p, point) {
                     return vec![Action::Exec("path.split".into(), json!({"id": id.0, "subpath": si, "anchor": ai}))];
                 }
@@ -277,5 +281,21 @@ mod tests {
         assert_eq!(dragged(press(&cx(&d, &s, &p), 240.0, 301.0)), "path.setHandle");
         let single = ToolContext { handles_multiple: false, ..cx(&d, &s, &p) };
         assert_eq!(dragged(press(&single, 240.0, 301.0)), "path.reshapeSegment");
+    }
+
+    /// Alt switches the Scissors to the Add Anchor Point tool
+    /// (https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html, "Edit
+    /// shapes"): an Alt-click on a segment inserts an anchor instead of cutting there.
+    #[test]
+    fn scissors_with_alt_add_an_anchor() {
+        let (d, id) = doc_with_rect();
+        let s = Selection::default();
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let mut t = AnchorTool::new("scissors");
+        let alt = Mods { alt: true, ..Default::default() };
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 150.0, 101.0).with_mods(alt));
+        assert!(matches!(&a[0], Action::Exec(c, v) if c == "path.insertAnchor" && v["id"] == id.0 && v["segment"] == 0), "{a:?}");
+        assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 20.0, 20.0).with_mods(alt)).is_empty());
     }
 }
