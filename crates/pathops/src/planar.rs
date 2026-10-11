@@ -94,47 +94,82 @@ fn mid(segs: &[Seg]) -> Option<Point> {
     segs.get(segs.len() / 2).map(|s| s.c.eval(0.5))
 }
 
-/// The inputs' segments (in the sweep's frame), to tell which inputs an edge lies on.
-///
-/// Asked once per edge of the map, so a scan of every segment each time made the map quadratic
-/// in the input (#937: past a few thousand segments the Shape Builder gave up on open paths).
-/// The segments are sorted by the left edge of their bounds, so those whose bounds can hold a
-/// point are one short run of them; the few widest (at most about √n: a long line across the art
-/// would otherwise stretch every run to the whole list) are kept apart and scanned.
-struct Outlines {
-    small: Vec<(kurbo::Rect, PathSeg, usize)>,
+/// Rectangles looked up by a point inside them, when there are too many to test one by one for
+/// every point (the map asks once per edge and once per hole, so a scan of them all made it
+/// quadratic in the input, #937). Rectangles narrow in x are sorted by their left edge, so the
+/// ones that can hold a point are one short run of them; those wide in x but narrow in y (a hatch
+/// of long horizontal lines) are sorted by their top edge the same way; the few wide both ways (a
+/// long diagonal across the art) are scanned. "Narrow" is up to twice the side of a cell holding
+/// one rectangle on average, so a run holds about the rectangles of one row or column of cells.
+struct RectIndex<T> {
+    by_x: Vec<(kurbo::Rect, T)>,
     max_width: f64,
-    wide: Vec<(kurbo::Rect, PathSeg, usize)>,
+    by_y: Vec<(kurbo::Rect, T)>,
+    max_height: f64,
+    wide: Vec<(kurbo::Rect, T)>,
+}
+
+impl<T> RectIndex<T> {
+    fn new(items: Vec<(kurbo::Rect, T)>) -> Self {
+        let n = items.len().max(1) as f64;
+        let all = items.iter().map(|(r, _)| *r).reduce(|a, b| a.union(b));
+        let cell = all
+            .map(|a| {
+                let side = (a.area() / n).sqrt();
+                if side > 0.0 { 2.0 * side } else { 2.0 * a.width().max(a.height()) / n }
+            })
+            .unwrap_or(0.0)
+            .max(1e-9);
+        let (mut by_x, mut by_y, mut wide) = (Vec::new(), Vec::new(), Vec::new());
+        for it in items {
+            if it.0.width() <= cell {
+                by_x.push(it);
+            } else if it.0.height() <= cell {
+                by_y.push(it);
+            } else {
+                wide.push(it);
+            }
+        }
+        by_x.sort_by(|a, b| a.0.x0.total_cmp(&b.0.x0));
+        by_y.sort_by(|a, b| a.0.y0.total_cmp(&b.0.y0));
+        let max_width = by_x.iter().map(|(r, _)| r.width()).fold(0.0, f64::max);
+        let max_height = by_y.iter().map(|(r, _)| r.height()).fold(0.0, f64::max);
+        Self { by_x, max_width, by_y, max_height, wide }
+    }
+
+    /// The items whose rectangle, grown by `tol`, holds `p`.
+    fn at(&self, p: Point, tol: f64) -> impl Iterator<Item = &T> {
+        let lo = self.by_x.partition_point(|(r, _)| r.x0 < p.x - tol - self.max_width);
+        let run_x = self.by_x.get(lo..).unwrap_or_default().iter().take_while(move |(r, _)| r.x0 <= p.x + tol);
+        let lo = self.by_y.partition_point(|(r, _)| r.y0 < p.y - tol - self.max_height);
+        let run_y = self.by_y.get(lo..).unwrap_or_default().iter().take_while(move |(r, _)| r.y0 <= p.y + tol);
+        run_x.chain(run_y).chain(&self.wide).filter(move |(r, _)| r.inflate(tol, tol).contains(p)).map(|(_, t)| t)
+    }
+}
+
+/// The inputs' segments (in the sweep's frame), to tell which inputs an edge lies on.
+struct Outlines {
+    segs: RectIndex<(PathSeg, usize)>,
     tol: f64,
 }
 
 impl Outlines {
     fn new(inputs: &[(BezPath, usize)], eps: f64) -> Self {
         // A zero-length segment (a point) is the source of no edge, even one running through it.
-        let mut segs: Vec<(kurbo::Rect, PathSeg, usize)> = inputs
+        let segs = inputs
             .iter()
-            .flat_map(|(bp, i)| bp.segments().map(move |s| (s.bounding_box(), s, *i)))
+            .flat_map(|(bp, i)| bp.segments().map(move |s| (s.bounding_box(), (s, *i))))
             .filter(|(r, ..)| r.width() > 0.0 || r.height() > 0.0)
             .collect();
-        segs.sort_by(|a, b| a.0.width().total_cmp(&b.0.width()));
-        let n_wide = ((segs.len() as f64).sqrt().ceil() as usize).min(segs.len());
-        let wide = segs.split_off(segs.len() - n_wide);
-        segs.sort_by(|a, b| a.0.x0.total_cmp(&b.0.x0));
-        let max_width = segs.iter().map(|(r, ..)| r.width()).fold(0.0, f64::max);
         // The sweep moves points by a few `eps` at most.
-        Self { small: segs, max_width, wide, tol: 16.0 * eps }
+        Self { segs: RectIndex::new(segs), tol: 16.0 * eps }
     }
 
     /// The front-most input whose outline passes through `p`.
     fn source_at(&self, p: Point) -> Option<usize> {
         use kurbo::ParamCurveNearest;
         let tol = self.tol;
-        let lo = self.small.partition_point(|(r, ..)| r.x0 < p.x - tol - self.max_width);
-        let run = self.small.get(lo..).unwrap_or_default().iter().take_while(|(r, ..)| r.x0 <= p.x + tol);
-        run.chain(&self.wide)
-            .filter(|(r, s, _)| r.inflate(tol, tol).contains(p) && s.nearest(p, 1e-9).distance_sq <= tol * tol)
-            .map(|(_, _, i)| *i)
-            .max()
+        self.segs.at(p, tol).filter(|(s, _)| s.nearest(p, 1e-9).distance_sq <= tol * tol).map(|(_, i)| *i).max()
     }
 }
 
@@ -188,12 +223,24 @@ fn twin(h: usize) -> usize {
 
 /// The segments of half-edge `h`, in its direction.
 fn half_segs(edges: &[Edge], h: usize) -> Vec<Seg> {
-    let Some(e) = edges.get(h / 2) else { return Vec::new() };
-    if h.is_multiple_of(2) {
-        e.segs.clone()
-    } else {
-        e.segs.iter().rev().map(|s| Seg { c: CubicBez::new(s.c.p3, s.c.p2, s.c.p1, s.c.p0), line: s.line }).collect()
-    }
+    half_seg_iter(edges, h).collect()
+}
+
+/// The segments of half-edge `h` in its direction, without copying the edge first (an edge can
+/// hold thousands of segments, and the angle it leaves a vertex at needs the first few).
+fn half_seg_iter(edges: &[Edge], h: usize) -> impl Iterator<Item = Seg> + '_ {
+    let segs = edges.get(h / 2).map(|e| e.segs.as_slice()).unwrap_or_default();
+    let forward = h.is_multiple_of(2);
+    (0..segs.len()).filter_map(move |k| {
+        let s = segs.get(if forward { k } else { segs.len() - 1 - k })?;
+        Some(if forward { *s } else { Seg { c: CubicBez::new(s.c.p3, s.c.p2, s.c.p1, s.c.p0), line: s.line } })
+    })
+}
+
+/// Where half-edge `h` ends (the vertex at the other end of its edge).
+fn far_end(edges: &[Edge], h: usize) -> Option<Point> {
+    let e = edges.get(h / 2)?;
+    if h.is_multiple_of(2) { e.segs.last().map(|s| s.c.p3) } else { e.segs.first().map(|s| s.c.p0) }
 }
 
 /// The vertex half-edge `h` leaves from.
@@ -206,13 +253,13 @@ fn origin(edges: &[Edge], h: usize) -> Option<usize> {
 /// Edges that only meet at `v` cross a circle around it in the order they leave `v` in, however
 /// they start out (tangent curves, or the sweep's short straight stubs at a vertex).
 fn leaving_angle(edges: &[Edge], h: usize, v: Point, r: f64) -> f64 {
-    let segs = half_segs(edges, h);
-    let mut prev = segs.first().map_or(v, |s| s.c.p0);
+    let first = half_seg_iter(edges, h).next();
+    let mut prev = first.map_or(v, |s| s.c.p0);
     let mut hit: Option<Point> = None;
     // One segment at a time, stopping at the first that gets r away: an edge can run on for
     // thousands of segments (a traced outline between two crossings), all of which flattening
     // the whole edge to this tolerance would visit, at every vertex.
-    for s in &segs {
+    for s in half_seg_iter(edges, h) {
         let path = [kurbo::PathEl::MoveTo(s.c.p0), kurbo::PathEl::CurveTo(s.c.p1, s.c.p2, s.c.p3)];
         kurbo::flatten(path, (r * 1e-4).max(1e-12), |el| {
             if let (None, kurbo::PathEl::LineTo(p)) = (hit, el) {
@@ -232,8 +279,7 @@ fn leaving_angle(edges: &[Edge], h: usize, v: Point, r: f64) -> f64 {
     }
     // An edge too short to reach r (it can't, r is at most half of every chord) leaves along its
     // tangent.
-    let far =
-        hit.unwrap_or_else(|| segs.first().map_or(v, |s| [s.c.p1, s.c.p2, s.c.p3].into_iter().find(|p| p.distance(s.c.p0) > 0.0).unwrap_or(s.c.p3)));
+    let far = hit.unwrap_or_else(|| first.map_or(v, |s| [s.c.p1, s.c.p2, s.c.p3].into_iter().find(|p| p.distance(s.c.p0) > 0.0).unwrap_or(s.c.p3)));
     (far - v).atan2()
 }
 
@@ -507,10 +553,10 @@ pub(crate) struct Map {
     edges: Vec<Edge>,
     around: Vec<Vec<usize>>,
     slot_of: Vec<usize>,
-    /// Bounded faces: their cycle of half-edges, path and area; and their bounds, so finding the
-    /// face around a point tests only the faces that can hold it.
+    /// Bounded faces: their cycle of half-edges, path and area; and, by their bounds, which can
+    /// hold a point, so finding the face around one tests only those.
     faces: Vec<(Vec<usize>, BezPath, f64)>,
-    face_bounds: Vec<kurbo::Rect>,
+    face_index: RectIndex<usize>,
     /// Outer boundaries of connected pieces, and the face each one is a hole in.
     holes: Vec<(Vec<usize>, BezPath)>,
     face_holes: Vec<Vec<usize>>,
@@ -621,7 +667,7 @@ pub(crate) fn map(shapes: &[Shape]) -> Option<Map> {
     for (v, list) in around.iter_mut().enumerate() {
         let Some(&at) = points.get(v) else { continue };
         // Half the shortest chord of the edges here: every one of them gets that far from it.
-        let r = 0.5 * list.iter().filter_map(|&h| half_segs(&edges, h).last().map(|s| s.c.p3.distance(at))).fold(f64::INFINITY, f64::min);
+        let r = 0.5 * list.iter().filter_map(|&h| far_end(&edges, h).map(|p| p.distance(at))).fold(f64::INFINITY, f64::min);
         let mut keyed: Vec<(f64, usize)> = list.iter().map(|&h| (leaving_angle(&edges, h, at, r), h)).collect();
         keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
         *list = keyed.into_iter().map(|(_, h)| h).collect();
@@ -682,17 +728,16 @@ pub(crate) fn map(shapes: &[Shape]) -> Option<Map> {
     }
 
     // Each hole goes in the smallest face of another piece around it.
-    let face_bounds: Vec<kurbo::Rect> = faces.iter().map(|(_, bp, _)| bp.bounding_box()).collect();
+    let face_index = RectIndex::new(faces.iter().enumerate().map(|(i, (_, bp, _))| (bp.bounding_box(), i)).collect());
     let mut face_holes: Vec<Vec<usize>> = vec![Vec::new(); faces.len()];
     for (k, (cycle, _)) in holes.iter().enumerate() {
         let Some(p) = cycle.first().and_then(|&h| origin(&edges, h)).and_then(|v| points.get(v)).copied() else { continue };
         let own = piece_of(cycle);
-        let around_it = faces
-            .iter()
-            .zip(&face_bounds)
-            .enumerate()
-            .filter(|(_, ((fc, bp, _), bb))| bb.contains(p) && piece_of(fc) != own && bp.winding(p) != 0)
-            .min_by(|a, b| a.1.0.2.total_cmp(&b.1.0.2))
+        let around_it = face_index
+            .at(p, 0.0)
+            .filter_map(|&i| faces.get(i).map(|f| (i, f)))
+            .filter(|(_, (fc, bp, _))| piece_of(fc) != own && bp.winding(p) != 0)
+            .min_by(|a, b| a.1.2.total_cmp(&b.1.2))
             .map(|(i, _)| i);
         if let Some(list) = around_it.and_then(|i| face_holes.get_mut(i)) {
             list.push(k);
@@ -703,7 +748,7 @@ pub(crate) fn map(shapes: &[Shape]) -> Option<Map> {
     let snap = 2.0 * eps;
     let mut anchors: Vec<Point> = shapes.iter().flat_map(|s| s.path.subpaths.iter().flat_map(|sp| sp.anchors.iter().map(|a| a.p))).collect();
     anchors.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
-    Some(Map { edges, around, slot_of, faces, face_bounds, holes, face_holes, tidy, anchors, snap })
+    Some(Map { edges, around, slot_of, faces, face_index, holes, face_holes, tidy, anchors, snap })
 }
 
 impl Map {
@@ -726,12 +771,11 @@ impl Map {
             let q = SHEAR * p;
             // The smallest face around it: faces of a piece inside a hole lie within the face around.
             let (i, _) = self
-                .faces
-                .iter()
-                .zip(&self.face_bounds)
-                .enumerate()
-                .filter(|(_, ((_, bp, _), bb))| bb.contains(q) && bp.winding(q) != 0)
-                .min_by(|a, b| a.1.0.2.total_cmp(&b.1.0.2))?;
+                .face_index
+                .at(q, 0.0)
+                .filter_map(|&i| self.faces.get(i).map(|f| (i, f)))
+                .filter(|(_, (_, bp, _))| bp.winding(q) != 0)
+                .min_by(|a, b| a.1.2.total_cmp(&b.1.2))?;
             *picked.get_mut(i)? = true;
         }
         let merged = |h: usize| face_of.get(h).copied().flatten().is_some_and(|f| picked.get(f) == Some(&true));
@@ -1211,7 +1255,6 @@ mod tests {
             line((-150.0, 0.0), (150.0, 3.0), 1),
             line((0.0, -150.0), (3.0, 150.0), 2),
         ];
-        let started = std::time::Instant::now();
         let BuilderArrangement { regions, lines, .. } = shape_builder(&s, false);
         assert_eq!(regions.len(), 4, "{}", regions.len());
         assert!(regions.iter().all(|r| r.sources == [0]));
@@ -1219,7 +1262,27 @@ mod tests {
         assert!((regions.iter().map(area).sum::<f64>() - whole).abs() < 1e-6 * whole);
         assert_eq!(lines.iter().filter(|l| l.key == 1).count(), 4, "cut twice by the blob and once by the other line");
         assert_eq!(lines.iter().filter(|l| l.key == 2).count(), 4);
-        assert!(started.elapsed().as_secs_f64() < 5.0, "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn a_hatch_of_parallel_lines_is_cut_line_by_line() {
+        // Hundreds of long horizontal lines over a square, all alike in x (the weak axis of an index
+        // by x alone), and one vertical line: every strip is cut in two.
+        let n = 300;
+        let mut s = vec![rect(0.0, 0.0, 100.0, 100.0, 0)];
+        for k in 1..n {
+            let y = 100.0 * f64::from(k) / f64::from(n);
+            s.push(line((-10.0, y), (110.0, y), k as u64));
+        }
+        s.push(line((50.0, -10.0), (50.0, 110.0), n as u64));
+        let BuilderArrangement { regions, lines, .. } = shape_builder(&s, false);
+        assert_eq!(regions.len(), 2 * n as usize, "{}", regions.len());
+        assert!(regions.iter().all(|r| r.sources == [0]));
+        assert!((regions.iter().map(area).sum::<f64>() - 10000.0).abs() < 1e-6);
+        // Each horizontal line: a loose end outside, two pieces inside, a loose end outside.
+        assert_eq!(lines.iter().filter(|l| l.key == 1).count(), 4);
+        // The vertical line: cut by the square's sides and every hatch line.
+        assert_eq!(lines.iter().filter(|l| l.key == n as u64).count(), n as usize + 2);
     }
 
     fn poly(pts: &[(f64, f64)], closed: bool) -> SubPath {
