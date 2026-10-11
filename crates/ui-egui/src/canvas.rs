@@ -98,6 +98,10 @@ fn drag_id() -> egui::Id {
 fn drag_pos_id() -> egui::Id {
     egui::Id::new("canvas-drag-pos")
 }
+/// Whether the press on the canvas has dragged (the tool got a Drag event).
+fn drag_began_id() -> egui::Id {
+    egui::Id::new("canvas-drag-began")
+}
 
 /// The pen pressure (0..1) of the press in progress: the force of this frame's pen or touch
 /// input, else the last one seen since the press (`pressed`: a new press, whose mouse has none
@@ -657,6 +661,7 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
                     if moved {
                         let ev = PointerEvent { kind: PointerKind::Drag, pos: xf.to_doc(p), mods: mods(m, space), pressure: pen_pressure(ui, false) };
                         dispatch(app, &ev, view);
+                        ui.data_mut(|dd| dd.insert_temp(drag_began_id(), true));
                     }
                     // Time held (Twirl, Pucker and Bloat keep applying); a stalled frame counts
                     // a quarter second at most.
@@ -668,9 +673,11 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
                 }
             }
         } else {
+            let began = ui.data(|dd| dd.get_temp::<bool>(drag_began_id())).unwrap_or(false);
             ui.data_mut(|dd| {
                 dd.remove::<Drag>(drag_id());
                 dd.remove::<Pos2>(drag_pos_id());
+                dd.remove::<bool>(drag_began_id());
             });
             match d {
                 Drag::ZoomBox { start } => {
@@ -695,8 +702,10 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
                 Drag::ZoomScrub { .. } => {}
                 Drag::Tool => {
                     // The move that came in the release's frame shapes the preview first: the
-                    // tools commit the last preview, where the pointer let go (#834).
-                    if moved && was.is_some() {
+                    // tools commit the last preview, where the pointer let go (#834). Only once
+                    // the press has dragged: a click's jitter stays a click (the Pen's corner
+                    // anchor, no nudge with Direct Selection).
+                    if moved && began {
                         let ev = PointerEvent { kind: PointerKind::Drag, pos: xf.to_doc(p), mods: mods(m, space), pressure: pen_pressure(ui, false) };
                         dispatch(app, &ev, view);
                     }
@@ -3307,6 +3316,18 @@ mod tests {
         let end = anchor_at + vec2(60.0, 50.0);
         frame(&mut app, &ctx, vec![Event::PointerMoved(end), button(end, false)]);
         assert!(near(first_anchor(&app).p, end), "released: {:?}", first_anchor(&app));
+        // A click whose release frame brings a little jitter is still a click: the Pen places a
+        // corner anchor (no handle pulled out by the jitter) and the anchor stays where pressed.
+        app.session.execute("select.none", &json!({})).unwrap();
+        app.select_tool("pen");
+        let c = app.canvas_rect.unwrap().center() + vec2(120.0, 80.0);
+        frame(&mut app, &ctx, vec![Event::PointerMoved(c)]);
+        frame(&mut app, &ctx, vec![button(c, true), Event::PointerMoved(c + vec2(0.6, 0.2)), button(c + vec2(0.6, 0.2), false)]);
+        frame(&mut app, &ctx, vec![]);
+        // (egui hands the press the frame's last pointer position, so it lands within the jitter.)
+        let a = first_anchor(&app);
+        assert!(a.p.distance(xf.to_doc(c)) < 1.0 && a.h_out == a.p && a.h_in == a.p, "corner anchor where pressed: {a:?}");
+        assert!(app.session.active().unwrap().interaction.is_none(), "committed");
     }
 
     #[test]

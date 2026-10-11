@@ -49,9 +49,10 @@ fn root_length(pt: f64, unit: Unit, decimals: u8) -> String {
         Unit::Millimeters => ("mm", Unit::Millimeters.points()),
         Unit::Centimeters | Unit::Meters => ("cm", Unit::Centimeters.points()),
     };
-    // One more decimal per decade the unit is bigger than a point.
+    // At least three decimals, and one more per decade the unit is bigger than a point, so the
+    // size converts back to within a thousandth of a point whatever the content's precision.
     let extra = per.log10().ceil().clamp(0.0, 4.0) as u8;
-    format!("{}{suffix}", fmt_num(pt / per, decimals.saturating_add(extra).min(7)))
+    format!("{}{suffix}", fmt_num(pt / per, decimals.max(3).saturating_add(extra).min(7)))
 }
 
 fn write(doc: &Document, opts: &ExportOptions, native: Option<&[u8]>, id_prefix: &str) -> Output {

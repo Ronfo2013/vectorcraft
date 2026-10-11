@@ -53,7 +53,7 @@ fn every_option_changes_the_output() {
     changed(&mut s, json!({"decimals": 1}), &|o| o.contains("M10.1 ") && !o.contains("10.123"));
     changed(&mut s, json!({"decimals": 6}), &|o| o.contains("10.123456"));
     changed(&mut s, json!({"minify": true}), &|o| !o.trim_end().contains('\n') && !o.contains("<?xml"));
-    changed(&mut s, json!({"responsive": true}), &|o| !o.contains(" width=\"200\"") && o.contains("viewBox=\"0 0 200 100\""));
+    changed(&mut s, json!({"responsive": true}), &|o| !o.contains(" width=\"200pt\"") && o.contains("viewBox=\"0 0 200 100\""));
     changed(&mut s, json!({"useArtboards": false}), &|o| !o.contains("viewBox=\"0 0 200 100\""));
     changed(&mut s, json!({"metadata": true}), &|o| o.contains("<metadata>") && o.contains("<dc:format>image/svg+xml</dc:format>"));
     changed(&mut s, json!({"preserveEditing": true}), &|o| o.contains(vectorcraft_svg::EDITING_NS));

@@ -48,7 +48,8 @@ pub(crate) fn import(svg: &str, opts: &ImportOptions) -> Result<(Document, Vec<S
     };
     let size = tree.size();
     let k = units.k;
-    let mut doc = Document::new(size.width() as f64 * k, size.height() as f64 * k);
+    let (w, h) = units.size.unwrap_or((size.width() as f64 * k, size.height() as f64 * k));
+    let mut doc = Document::new(w, h);
     doc.units = units.unit;
     let mut im = Importer {
         doc,
@@ -68,15 +69,25 @@ pub(crate) fn import(svg: &str, opts: &ImportOptions) -> Result<(Document, Vec<S
         data: found.data,
         sublayers: found.sublayers,
         sublayer_groups: HashSet::new(),
-        screen: units.screen,
+        screen: k,
     };
     if im.files.nested_text() {
         im.warn("text inside an SVG image isn't imported".into());
     }
 
-    // usvg wraps everything in an id-less group carrying the viewBox transform when needed.
+    // usvg wraps everything in an id-less group carrying the viewBox transform when that isn't
+    // the identity (so always for a root sized in points, #864): that group is no group of the
+    // art, and the exact viewBox mapping computed from the attributes stands in for its `f32` one
+    // where they agree. Then one plain wrapper of the art folds in, as before.
     let mut top = tree.root();
     let mut base = Affine::scale(k) * aff(top.transform());
+    if let Some(g) = im.wrapper(top).filter(|g| !g.transform().is_identity()) {
+        base *= aff(g.transform());
+        top = g;
+        if let Some(exact) = units.view.filter(|v| same_affine(*v, base)) {
+            base = exact;
+        }
+    }
     if let Some(g) = im.wrapper(top) {
         base *= aff(g.transform());
         top = g;
@@ -216,34 +227,36 @@ pub(super) const DEFAULT_FONT_SIZE: f64 = 12.0;
 /// side absolute and the other not (`width="96pt" height="96"`), both are: the unitless side is
 /// CSS pixels too, so the drawing isn't stretched (#1010).
 ///
-/// A root in absolute units with a `viewBox` (`width="200pt" viewBox="0 0 200 200"`, as we write
-/// a document in points, #864) is converted at 72 per inch with user units read as points: the
-/// same mapping (the `viewBox` scale absorbs the pixel size), computed without the 96/72 detour
-/// so a document in points comes back with its coordinates exact (usvg works in `f32`).
+/// Lengths inside the content convert the way browsers convert them: an absolute one is CSS
+/// pixels in user units (`10mm` is 37.8 user units), then the `viewBox` scales it like any other.
+///
+/// The root's own size, and the `viewBox` mapping of user units onto it, are also computed here
+/// in `f64` from the attributes (#864): usvg works in `f32`, so a document we wrote in points
+/// (`width="200pt" viewBox="0 0 200 200"`) would otherwise come back with its coordinates and
+/// artboard off in the sixth digit. These exact values replace usvg's when they agree with them.
 struct RootUnits {
     /// Pixels per inch usvg (and the text pass) convert absolute lengths at.
     dpi: f64,
     /// Points per user unit of the root, along both axes.
     k: f64,
-    /// Points per screen pixel (a CSS pixel of a root in absolute units): what a non-scaling
-    /// stroke's width is measured in.
-    screen: f64,
     /// Document units: those of the root `width` (pixels when it has none).
     unit: Unit,
+    /// The root's size in points, from its `width` and `height` (both given, in units we know).
+    size: Option<(f64, f64)>,
+    /// User units → points through the root's `viewBox` and `preserveAspectRatio`, when it has a
+    /// `viewBox` usvg accepts (positive width and height) and its size is known.
+    view: Option<Affine>,
 }
 
 impl RootUnits {
     fn of(root: XNode) -> Self {
-        let unit = |name: &str| root.attribute(name).and_then(|v| svgtypes::Length::from_str(v.trim()).ok()).map(|l| l.unit);
+        let length = |name: &str| root.attribute(name).and_then(|v| svgtypes::Length::from_str(v.trim()).ok());
         use svgtypes::LengthUnit as U;
         let physical = |u: Option<U>| matches!(u, Some(U::In | U::Cm | U::Mm | U::Pt | U::Pc));
-        let (w, h) = (unit("width"), unit("height"));
-        let any_physical = physical(w) || physical(h);
-        // Both given sides absolute, with a viewBox: user units are points, exactly.
-        let exact = any_physical && root.has_attribute("viewBox") && [w, h].iter().all(|u| u.is_none() || physical(*u));
-        let (dpi, k) = if any_physical && !exact { (CSS_PX_PER_IN, PT_PER_IN / CSS_PX_PER_IN) } else { (PT_PER_IN, 1.0) };
-        let screen = if any_physical { PT_PER_IN / CSS_PX_PER_IN } else { 1.0 };
-        let unit = match w {
+        let (w, h) = (length("width"), length("height"));
+        let (dpi, k) =
+            if physical(w.map(|l| l.unit)) || physical(h.map(|l| l.unit)) { (CSS_PX_PER_IN, PT_PER_IN / CSS_PX_PER_IN) } else { (PT_PER_IN, 1.0) };
+        let unit = match w.map(|l| l.unit) {
             Some(U::Mm) => Unit::Millimeters,
             Some(U::Cm) => Unit::Centimeters,
             Some(U::In) => Unit::Inches,
@@ -251,8 +264,58 @@ impl RootUnits {
             Some(U::Pc) => Unit::Picas,
             _ => Unit::Pixels,
         };
-        Self { dpi, k, screen, unit }
+        // A root length in points, exactly (none for relative units: usvg decides those).
+        let pt = |l: svgtypes::Length| {
+            let per = match l.unit {
+                U::None | U::Px => k,
+                U::In => PT_PER_IN,
+                U::Cm => PT_PER_IN / 2.54,
+                U::Mm => PT_PER_IN / 25.4,
+                U::Pt => 1.0,
+                U::Pc => 12.0,
+                _ => return None,
+            };
+            Some(l.number * per).filter(|v| v.is_finite() && *v > 0.0)
+        };
+        let size = w.zip(h).and_then(|(w, h)| pt(w).zip(pt(h)));
+        let view = size.and_then(|(w, h)| {
+            // svgtypes refuses a viewBox of no size, as usvg (which parses it the same way) does.
+            let vb = svgtypes::ViewBox::from_str(root.attribute("viewBox")?.trim()).ok()?;
+            let ar = root.attribute("preserveAspectRatio").and_then(|v| svgtypes::AspectRatio::from_str(v.trim()).ok()).unwrap_or_default();
+            Some(view_box_transform(vb, ar, w, h))
+        });
+        Self { dpi, k, unit, size, view }
     }
+}
+
+/// The transform of a `viewBox` `vb` onto a viewport `w` × `h` with `preserveAspectRatio` `ar`
+/// (SVG 1.1 §7.8).
+fn view_box_transform(vb: svgtypes::ViewBox, ar: svgtypes::AspectRatio, w: f64, h: f64) -> Affine {
+    use svgtypes::Align as A;
+    let (mut sx, mut sy) = (w / vb.w, h / vb.h);
+    if ar.align != A::None {
+        let s = if ar.slice { sx.max(sy) } else { sx.min(sy) };
+        (sx, sy) = (s, s);
+    }
+    let (dx, dy) = (w - vb.w * sx, h - vb.h * sy);
+    let tx = -vb.x * sx
+        + match ar.align {
+            A::XMidYMin | A::XMidYMid | A::XMidYMax => dx / 2.0,
+            A::XMaxYMin | A::XMaxYMid | A::XMaxYMax => dx,
+            _ => 0.0,
+        };
+    let ty = -vb.y * sy
+        + match ar.align {
+            A::XMinYMid | A::XMidYMid | A::XMaxYMid => dy / 2.0,
+            A::XMinYMax | A::XMidYMax | A::XMaxYMax => dy,
+            _ => 0.0,
+        };
+    Affine::new([sx, 0.0, 0.0, sy, tx, ty])
+}
+
+/// Are `a` and `b` the same transform but for `f32` rounding?
+fn same_affine(a: Affine, b: Affine) -> bool {
+    a.as_coeffs().iter().zip(b.as_coeffs()).all(|(x, y)| (x - y).abs() <= 1e-3 * x.abs().max(1.0))
 }
 
 /// How many clip paths deep (`<clipPath clip-path>`) an object's clip is read.

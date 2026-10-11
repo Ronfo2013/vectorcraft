@@ -133,6 +133,53 @@ fn absolute_lengths_in_a_pixel_document_keep_their_size() {
     assert!(close(n.appearance.stroke_width(), 2.0));
 }
 
+/// Lengths inside the content of a root in absolute units with a `viewBox` convert as browsers
+/// convert them (SVG 1.1 §7.10): an absolute length is CSS pixels in user units, which the
+/// `viewBox` then scales like any other. Here a user unit is 1 mm (2.835 pt), so `10mm` is 37.8
+/// user units, 107.2 pt (37.8 mm) on the page, and `12pt` type is 16 user units, 45.4 pt: what a
+/// browser shows, not the physical 28.35 and 12 pt.
+#[test]
+fn inner_absolute_lengths_under_a_physical_root_with_a_view_box_scale_as_in_browsers() {
+    let d = import(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297">
+        <rect x="0" y="0" width="10mm" height="10mm"/><text x="0" y="100" font-size="12pt">Hi</text></svg>"#,
+    )
+    .unwrap();
+    let per_user = 210.0 * 72.0 / 25.4 / 210.0;
+    let px = 96.0 / 25.4 * 10.0;
+    assert!(close_rect(d.artboards[0].rect, Rect::new(0.0, 0.0, 595.28, 841.89)), "{:?}", d.artboards[0].rect);
+    let b = art(&d)[0].geometric_bounds().unwrap();
+    assert!(close(b.width(), px * per_user) && close(b.height(), px * per_user), "{b:?}");
+    let sizes = text_sizes(&d);
+    assert!(sizes.len() == 1 && close(sizes[0], 16.0 * per_user), "{sizes:?}");
+}
+
+/// A `viewBox` of no size is ignored, as usvg ignores it: the root's size still comes from its
+/// attributes, exactly, and user units are CSS pixels of it.
+#[test]
+fn a_view_box_of_no_size_is_ignored() {
+    let d = import(r#"<svg xmlns="http://www.w3.org/2000/svg" width="200pt" height="100pt" viewBox="0 0 0 0"><rect width="10" height="10"/></svg>"#)
+        .unwrap();
+    assert_eq!(d.artboards[0].rect, Rect::new(0.0, 0.0, 200.0, 100.0));
+    assert_eq!(d.units, Unit::Points);
+    let b = art(&d)[0].geometric_bounds().unwrap();
+    assert!(close_rect(b, Rect::new(0.0, 0.0, 7.5, 7.5)), "{b:?}");
+}
+
+/// The root size is written with enough decimals to come back exactly whatever the content's
+/// `decimals` option (0 here): 200 pt is 7.0556 cm, which 7.1 cm would not have given back.
+#[test]
+fn the_root_size_survives_a_low_decimals_export() {
+    use vectorcraft_svg::{ExportOptions, export};
+    let mut d = Document::new(200.0, 100.0);
+    d.units = Unit::Centimeters;
+    let svg = export(&d, &ExportOptions { decimals: 1, ..ExportOptions::default() });
+    assert!(svg.contains(r#"width="7.05556cm" height="3.52778cm""#), "{svg}");
+    let back = import(&svg).unwrap();
+    let r = back.artboards[0].rect;
+    assert!((r.width() - 200.0).abs() < 1e-3 && (r.height() - 100.0).abs() < 1e-3, "{r:?}");
+}
+
 /// #864: a document's units survive an SVG round trip, and so does its artboard size. The root
 /// `width`/`height` carry the unit (`width="210mm"`, SVG 1.1 §7.10 / §5.1.2), with the `viewBox`
 /// in user units (points, as the model is); a document in pixels writes unitless lengths, which
