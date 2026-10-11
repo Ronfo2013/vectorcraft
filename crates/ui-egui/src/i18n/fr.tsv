@@ -3351,6 +3351,12 @@ axis	Both	Les deux
 @msg	its page has text, and its layers have no text objects to put it in	sa page contient du texte, et ses calques n’ont aucun objet texte où le mettre
 @msg	its type is to come in as outlines, which only its page has	son texte doit être importé sous forme de contours vectorisés, que seule sa page contient
 @msg	the art on them differs from the page's in {_1}% of it	le dessin des calques diffère de celui de la page sur {_1} % de sa surface
+@msg	it isn't Illustrator editing data VectorCraft reads	ce ne sont pas des données d’édition Illustrator que VectorCraft lit
+@msg	its `/{kind} X!` object doesn't end	son objet `/{kind} X!` ne se termine pas
+@msg	its private data stream {n} can't be decoded (or the data is larger than {_1} MB)	son flux de données privées {n} ne peut pas être décodé (ou les données dépassent {_1} Mo)
+@msg	its private data stream {n} isn't a stream that can be read	son flux de données privées {n} n’est pas un flux lisible
+@msg	its private data streams aren't numbered 1 to {keys}: stream {_1} is missing	ses flux de données privées ne sont pas numérotés de 1 à {keys} : le flux {_1} manque
+@msg	the art on them differs from the page's in {_1}% of artboard {_2}	le dessin des calques diffère de celui de la page sur {_1} % du plan de travail {_2}
 @msg	`to` must be "corner" or "smooth"	`to` doit être "corner" ou "smooth"
 @msg	BMP files are RGB or grayscale: colorModel rgb or gray	Les fichiers BMP sont en RVB ou en niveaux de gris : colorModel rgb ou gray
 @msg	Blend colors: select at least three objects with filled colours	Fusion des couleurs : sélectionnez au moins trois objets dotés d’un fond de couleur

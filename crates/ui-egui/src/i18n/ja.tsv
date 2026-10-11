@@ -3666,6 +3666,12 @@ theme	Appearance	外観
 @msg	its editing data is for a different page	編集データが別のページのものです
 @msg	its page has text, and its layers have no text objects to put it in	ページにテキストがありますが、レイヤーにはそれを入れるテキストオブジェクトがありません
 @msg	the art on them differs from the page's in {_1}% of it	レイヤー上のアートの {_1}% がページのアートと異なります
+@msg	it isn't Illustrator editing data VectorCraft reads	VectorCraft が読み取る Illustrator の編集データではありません
+@msg	its `/{kind} X!` object doesn't end	その `/{kind} X!` オブジェクトが終了していません
+@msg	its private data stream {n} can't be decoded (or the data is larger than {_1} MB)	そのプライベートデータストリーム {n} をデコードできません（またはデータが {_1} MB を超えています）
+@msg	its private data stream {n} isn't a stream that can be read	そのプライベートデータストリーム {n} は読み取れるストリームではありません
+@msg	its private data streams aren't numbered 1 to {keys}: stream {_1} is missing	そのプライベートデータストリームが 1 から {keys} まで番号付けされていません：ストリーム {_1} がありません
+@msg	the art on them differs from the page's in {_1}% of artboard {_2}	レイヤー上のアートの {_1}% がページのアートと異なります（アートボード {_2}）
 @msg	its Windows metafile preview was opened instead, which may simplify the art	代わりに Windows メタファイルのプレビューを開いたため、アートが簡略化されている場合があります
 @msg	its preview was placed instead, at screen resolution	代わりにプレビューを画面解像度で配置しました
 @msg	shadings of more than 4096 patches or triangles were left out	パッチまたは三角形が 4096 個を超えるシェーディングは除外されました
