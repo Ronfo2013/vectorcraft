@@ -10,7 +10,7 @@ use vectorcraft_doc::{AppearanceItem, ColorMode, Document, Knockout, LayerColor,
 use super::*;
 
 /// Editing data: header comments (crop marks 0 0 200 100), then `body`.
-fn stream(body: &str) -> String {
+pub(super) fn stream(body: &str) -> String {
     format!(
         "%!PS-Adobe-3.0\n%%Creator: test\n%AI5_FileFormat 14.0\n%AI3_Cropmarks: 0 0 200 100\n%%EndComments\n%%BeginProlog\n%%EndProlog\n%%BeginSetup\n%%EndSetup\n{body}\n%%PageTrailer\ngsave annotatepage grestore showpage\n%%Trailer\n%%EOF\n"
     )
@@ -37,7 +37,7 @@ fn fill(n: &Node) -> Paint {
     n.appearance.fill().map(|f| f.paint.clone()).unwrap_or_default()
 }
 
-fn rect_path(x0: f64, y0: f64, x1: f64, y1: f64) -> String {
+pub(super) fn rect_path(x0: f64, y0: f64, x1: f64, y1: f64) -> String {
     format!("{x0} {y0} m\n{x0} {y1} L\n{x1} {y1} L\n{x1} {y0} L\n{x0} {y0} L\n")
 }
 
@@ -388,16 +388,22 @@ fn text_objects_are_slots_named_after_their_story() {
 
 #[test]
 fn what_it_doesnt_read_is_an_error_where_it_shows() {
-    let e = read(stream(&layer("1 2 frobnicate\n")).as_bytes()).unwrap_err();
+    // An operator this doesn't know while a path is being built could paint it: an error.
+    let e = read(stream(&layer("0 0 m\n1 2 frobnicate\nf\n")).as_bytes()).unwrap_err();
     assert!(e.contains("`frobnicate`"), "{e}");
     let e = read(stream(&layer("(Jive) 0 0 1 1 0 0 0 0 0 [1 0 0 1 0 0] p\n")).as_bytes()).unwrap_err();
     assert!(e.contains("pattern fills"), "{e}");
     let e = read(stream(&layer("/SymbolInstance :\n(Dot) /SymbolRef ,\n;\n")).as_bytes()).unwrap_err();
     assert!(e.contains("symbols"), "{e}");
-    // On a layer that doesn't show, it is left out of it.
+    // On a layer that doesn't show, it is left out of it (an unknown operator too: nothing checks
+    // that layer's art, so it isn't skipped as state).
     let hidden = "%AI5_BeginLayer\n0 1 1 1 0 0 0 1 255 79 79 0 50 0 Lb\n(Off) Ln\n1 2 frobnicate\n(J) 0 0 1 1 0 0 0 0 0 [1 0 0 1 0 0] p\nLB\n%AI5_EndLayer--\n";
     let r = read_ok(hidden);
     assert_eq!(r.hidden_unread.iter().cloned().collect::<Vec<_>>(), ["`frobnicate`", "pattern fills"]);
+    assert!(r.skipped.is_empty() && r.warnings.is_empty(), "{:?} {:?}", r.skipped, r.warnings);
+    // On one that shows, between objects, it is skipped: the importer notes it.
+    let r = read_ok(&layer("1 2 frobnicate\n"));
+    assert_eq!(r.skipped.iter().cloned().collect::<Vec<_>>(), ["frobnicate"]);
     // Unbalanced containers, a layer that doesn't end, no layers.
     assert!(read(stream(&layer("U\n")).as_bytes()).is_err());
     assert!(read(stream("%AI5_BeginLayer\n(L) Ln\n0 Ae\nu\n").as_bytes()).is_err());

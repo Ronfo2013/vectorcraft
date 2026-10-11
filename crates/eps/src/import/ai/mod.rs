@@ -27,11 +27,13 @@ use std::io::Read as _;
 use super::lex::find;
 use crate::ps;
 
-pub use read::{Structure, artboards, read};
+pub use read::{OBJECTS_LEFT_OUT, OPERATORS_SKIPPED, OPERATORS_SKIPPED_UNCHECKED, Structure, artboards, read};
 pub(crate) use read::{slot_frame, slot_of};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_structure;
 
 /// Largest editing data read, decompressed (bytes).
 pub const MAX_DATA: u64 = 256 << 20;

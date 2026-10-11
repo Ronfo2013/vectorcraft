@@ -65,7 +65,7 @@ fn place_group(g: usize, ocgs: &Ocgs, slots: &mut Vec<Slot>, nesting: &mut Nesti
     let mut child = g;
     // Each parent is placed before its sublayers, so the chain ends (within the nesting depth).
     for _ in 0..=MAX_NESTING {
-        let Some(parent) = ocgs.list.get(child).and_then(|o| o.parent) else { break };
+        let Some(parent) = ocgs.parent_of(child) else { break };
         let placed = nesting.contains_key(&parent);
         nesting.entry(parent).or_default().push(child);
         if placed {
@@ -80,7 +80,7 @@ fn place_group(g: usize, ocgs: &Ocgs, slots: &mut Vec<Slot>, nesting: &mut Nesti
 fn top_group(g: usize, ocgs: &Ocgs) -> usize {
     let mut top = g;
     for _ in 0..=MAX_NESTING {
-        match ocgs.list.get(top).and_then(|o| o.parent) {
+        match ocgs.parent_of(top) {
             Some(parent) => top = parent,
             None => break,
         }
@@ -206,8 +206,15 @@ pub fn import_with_report(bytes: &[u8], opts: &ImportOptions) -> Result<ImportRe
         let xf = Affine::translate((x - frame.x0, -frame.y0)) * init;
         let mut ctx = Context::new(xf, ab, &cache, pdf.xref(), settings.clone());
         b.page = ab;
-        let scan = scan_page(page, &mut ocgs, all_on, &mut b.fonts);
+        let mut scan = scan_page(page, &mut ocgs, all_on, &mut b.fonts);
+        // A PDF-compatible `.ai` (the editor's private data next to the PDF art).
+        let ai = crate::pages::has_private_data(page);
         if route {
+            // Its layers are the document's, the same on every artboard; a plain PDF's groups are
+            // each their own layer.
+            if ai {
+                ocgs.merge_repeats(&mut scan);
+            }
             let mut seen = HashSet::new();
             let marked: Vec<usize> = scan.tags.iter().filter_map(|(_, g)| g.map(|g| top_group(g, &ocgs))).filter(|g| seen.insert(*g)).collect();
             merge_order(&mut order, &mut known, &marked);
@@ -215,8 +222,6 @@ pub fn import_with_report(bytes: &[u8], opts: &ImportOptions) -> Result<ImportRe
         b.begin_page(scan);
         interpret_page(page, &mut ctx, &mut b);
         let mut parts = b.end_page();
-        // A PDF-compatible `.ai` (the editor's private data next to the PDF art).
-        let ai = crate::pages::has_private_data(page);
         if ai {
             drop_page_fill(&mut parts, xf.transform_rect_bbox(crate::pages::page_box(page, CropTo::Crop)));
             b.warn(OFF_ARTBOARD_NOTE);

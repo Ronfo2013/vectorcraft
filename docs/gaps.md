@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every known shortfall against Illustrator, one entry each, **ranked by how much it stops a professional from
 switching**. This is the work list: unless you were given a task, pick the highest-ranked gap you can make
@@ -57,11 +57,25 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 ## G9 Illustrator `.ai` and EPS files from real users
 
-- **Missing:** faithful layer and group structure from the editing data in real files (#951: 109 layers instead
-  of 14; #868: round trip with Illustrator 2018 loses layers and groups), guides and non-printing construction
-  lines (#779), open speed on large files (#758), legacy type in `.ai` files in PostScript form (those without
-  their prolog open since #1027), live effects, brushes and symbols as live objects (#637; pattern fills and global colours are read since #1025). Writing Illustrator's own editing data is out of scope
-  (undocumented); Save As `.ai` stays PDF-compatible.
+- **Missing:** the reason the editing data of some real files isn't used (#951: a 100-page book opened as
+  its PDF part with 109, later 1400, layers for 14; #868: an Illustrator 2018 file opened as its PDF part,
+  flat), which only those files can tell: as of 2026-10-11 the open notes name what stopped it (an unreadable
+  private data stream, data without layers, or the reader's own reason), the reader's handling of any
+  nesting of layers, sublayers, groups, compound paths, clipping groups, hidden and locked objects and guides
+  is under a property test (`crates/eps/src/import/ai/tests_structure.rs`, end to end in
+  `crates/engine/src/cmd/fileio/tests_aiimport.rs`), and a PDF part that repeats its layers on every page
+  opens with one layer per name. On a user's Illustrator 30.8 file (used locally) the editing data was
+  stopped by two operators the reader didn't know, which write a gradient mesh (`/Mesh X!` … `/End X!`): now
+  unknown operators between objects are skipped with a note, objects of kinds the reader doesn't read are
+  left out with a loss note, every artboard is compared with its page, and the file opens from its editing
+  data (groups, compound paths, named artboards) with its 3 meshes left out. **Next:** read gradient meshes
+  from the editing data (the structure is known: `/Size`, `/Data`, per node `/P`, `/R`, `/CS`, `/S`, `/N`,
+  `/E` entries). Still open: guides when a file falls back to its PDF part (#779: the PDF part
+  has none), the page comparison's cost on large files (#758: the reader itself reads 50 000 objects in
+  0.6 s in the optimized test profile), legacy type in `.ai` files in PostScript form (those without their prolog open since
+  #1027), live effects, brushes and symbols as live objects (#637; pattern fills and global colours are read
+  since #1025). Writing Illustrator's own editing data is out of scope (undocumented); Save As `.ai` stays
+  PDF-compatible, so Illustrator opens our files as plain PDF art (#868's other direction).
 - **Evidence:** the issues above; 28 of the 350 issues are about `.ai`/EPS (about 22 people, the most common single
   format theme), 20 fixed, and the 8 open ones are about structure (layers, guides, speed, live objects), not missing
   art. No real-file `.ai` corpus (users' files may be used locally, never committed).
@@ -210,6 +224,8 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | G9: a real Illustrator 30.8 file opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared with its page); next: read gradient meshes; estimate unchanged |
+| 2026-10-11 | minor | G9: layer structure of the editing data audited and property-tested; PDF layers repeated per page merged; unreadable private data named in the notes (#951, #868, #779, #758); estimate unchanged, needs the users' files |
 | 2026-10-11 | minor | G11: Shape Builder on art of thousands of segments (traced outlines, type outlines): lines cut it again past 4096 segments, where the planar map used to give up and the tool offered whole shapes (#937's reproduced case; the map's edge-source lookup was quadratic, now indexed, and the cap is 65 536); estimate unchanged until confirmed on the reporter's file |
 | 2026-10-11 | minor | G4: proportional vertical metrics (#966) done; estimate unchanged |
 | 2026-10-11 | minor | G11: #893 fixed (merged regions of crossing lines left seams); #937 still open, estimate unchanged |

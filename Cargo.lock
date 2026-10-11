@@ -4608,6 +4608,7 @@ dependencies = [
  "flate2",
  "image",
  "kurbo 0.13.1",
+ "proptest",
  "ruzstd",
  "vectorcraft-brush",
  "vectorcraft-color",

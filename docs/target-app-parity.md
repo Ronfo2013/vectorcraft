@@ -1,6 +1,6 @@
 # Parity with Adobe Illustrator
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G1 interaction-fidelity pass begun: selection-tool, Scissors, Pencil and Knife modifiers from the shortcut reference, scores unchanged; Shape Builder: lines cut art of thousands of segments again, #937's reproduced case, scores unchanged until confirmed on the reporter's file; Drawing tools: Live Corners round corners between curved sides, #1144; Type advanced: proportional vertical metrics (`vpal`) done, #966; Shape Builder: #893 fixed, merged regions of crossing lines no longer keep seams; scores unchanged while #937 is open; #1034: document-point character controls after object/group scaling; full readiness recomputed as the standard's additive weighted sum, ~62%; per-audience hours; essentials-user score ~75% added; ready-for-real-work re-examined: 50% → 55%, mainstream 65% added; earlier the same day: full re-measure against Illustrator 2026 30.x; merged the ROADMAP's parity estimate, honest assessment and "Shipped so far" into this file) · **Target:** Adobe Illustrator 2026 (30.x; public release notes through 30.7, August 2026)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (File formats: a real Illustrator 30.8 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure under property tests, PDF layers repeated per page merged, unreadable private data named, G9 #951/#868/#779/#758, score unchanged; G1 interaction-fidelity pass begun: selection-tool, Scissors, Pencil and Knife modifiers from the shortcut reference, scores unchanged; Shape Builder: lines cut art of thousands of segments again, #937's reproduced case, scores unchanged until confirmed on the reporter's file; Drawing tools: Live Corners round corners between curved sides, #1144; Type advanced: proportional vertical metrics (`vpal`) done, #966; Shape Builder: #893 fixed, merged regions of crossing lines no longer keep seams; scores unchanged while #937 is open; #1034: document-point character controls after object/group scaling; full readiness recomputed as the standard's additive weighted sum, ~62%; per-audience hours; essentials-user score ~75% added; ready-for-real-work re-examined: 50% → 55%, mainstream 65% added; earlier the same day: full re-measure against Illustrator 2026 30.x; merged the ROADMAP's parity estimate, honest assessment and "Shipped so far" into this file) · **Target:** Adobe Illustrator 2026 (30.x; public release notes through 30.7, August 2026)
 
 The authoritative parity assessment. [`ROADMAP.md`](../ROADMAP.md) summarizes it; [`gaps.md`](gaps.md) is
 the work list made from it. Deep areas have their own checklists: [UI and interaction](ui-parity.md),
@@ -83,7 +83,7 @@ dominate; 3D, graphs and automation are specialist). They sum to 105. Feature de
 | Layers, artboards, document setup | 5 | 78% | 30.0's artboard locking and colours and managing artboards from the canvas, Layers panel row context menus and Collect for Export | 5–8 | estimated (lowered from 82%: target moved) |
 | View & navigation | 3 | 70% | New View/Edit Views, multiple windows and Arrange, Snap to Glyph | 9–14 | estimated |
 | Guides, grids, smart guides, snapping, rulers | 3 | 80% | 30.0's tangent and perpendicular snapping and its snapping panel, "intersect" smart guides, global/video rulers, distance readouts while drawing | 4–7 | estimated (lowered from 85%: target moved) |
-| File formats | 6 | 75% | `.ai` files open with a flattened or wrong layer structure in real cases (#951, #868), guides lost (#779), no writing of Illustrator's editing data, FreeHand/CorelDRAW/DWG/HEIC/JPEG 2000 import, 3D export; see [file-format-parity.md](file-format-parity.md) | 10–20 | estimated (lowered from 85%: open issues) |
+| File formats | 6 | 75% | gradient meshes aren't read from `.ai` editing data (left out with a loss note; a user's Illustrator 30.8 file otherwise opens from its editing data since 2026-10-11, unknown operators no longer stopping the reader), `.ai` files from two users opened as their PDF part with no reason given (#951, #868; the open notes now name what stopped the editing data, and the reader's nesting of layers, sublayers, groups, compound paths, clipping groups and guides is property-tested; the files themselves are still needed), guides lost when a file falls back to its PDF part (#779), no writing of Illustrator's editing data, FreeHand/CorelDRAW/DWG/HEIC/JPEG 2000 import, 3D export; see [file-format-parity.md](file-format-parity.md) | 10–20 | estimated (lowered from 85%: open issues) |
 | Export for Screens, Asset Export, slices, Save for Web | 3 | 85% | anti-aliasing ghost borders (#983), TIFF in Export for Screens (30.2) | 2–4 | estimated |
 | Print, colour management, separations, flattener | 3 | 80% | print preview fidelity | 2–4 | estimated |
 | Automation (Actions, Variables, scripting, batch) | 3 | 60% | a scripting surface (Illustrator: JavaScript/ExtendScript), Batch, image and graph variables, dataset import/export | 8–14 | estimated |
@@ -157,7 +157,17 @@ The discounts, with the evidence:
   about `.ai`/EPS, the most common single format theme. 20 of the 28 are fixed (often the same day). The 8 open
   ones are about structure, not missing art: layers flattened or multiplied (#951: 109 layers instead of 14;
   #868), guides lost (#779), slower opening (#758), live effects, brushes and symbols as their drawn look
-  (#637). VectorCraft can't write Illustrator's editing data (undocumented), so its `.ai` opens in Illustrator
+  (#637). Settled without the files (2026-10-11, G9 audit): random nestings of layers, sublayers, groups,
+  compound paths, clipping groups, hidden and locked objects and guides come back as written from the editing
+  data (`crates/eps/src/import/ai/tests_structure.rs`, end to end in `tests_aiimport.rs`); a PDF part that
+  writes its layers again for every page opens with one layer per name (`tests_import_layers.rs`, the likely
+  shape of #951's 1400 layers); and private data that can't be read is named in the open notes instead of the
+  file silently opening as its PDF part, which both #951 and #868 reported. On a user's Illustrator 30.8 file
+  (4 artboards, used locally) the reader was stopped by the gradient-mesh operators (`X!`, `X#`); unknown
+  operators between objects are now skipped with a note, objects of unread kinds left out with a loss note,
+  every artboard compared with its page, and the file opens from its editing data (groups, compound paths and
+  named artboards back; 3 meshes left out). VectorCraft can't write
+  Illustrator's editing data (undocumented), so its `.ai` opens in Illustrator
   as plain art. That blocks beta (the main-format rule) for people who hand files back to Illustrator users,
   but it doesn't stop someone opening and reworking their own archive.
 - **Interaction fidelity (×0.9).** Pen, Direct Selection, smart guides and snapping are deep
@@ -460,6 +470,8 @@ Moved from the ROADMAP's "Shipped so far" on 2026-10-10. Update it when a featur
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | File formats: a real Illustrator 30.8 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared); meshes added to the missing list; score 75% unchanged (estimated) |
+| 2026-10-11 | minor | File formats: G9 audit of the `.ai` layer structure (property tests, per-page PDF layer merge, named fallback reasons: #951, #868, #779, #758); score 75% and hours unchanged, the users' files still needed (estimated) |
 | 2026-10-11 | minor | Shape Builder on art of thousands of segments (traced outlines, type outlines): lines cut it again past 4096 segments, where the planar map used to give up and the tool offered whole shapes (#937's reproduced case; the map's edge-source lookup was quadratic, now indexed, and the cap is 65 536); scores unchanged (estimated) |
 | 2026-10-11 | minor | Platforms: Preferences › Performance › Linux Display Server opens the window through XWayland, where file drops work (#1151); score unchanged (estimated) |
 | 2026-10-11 | minor | Drawing tools: Live Corners on corners between curved sides (#1144) leaves the missing list; score and hours unchanged at this rounding (estimated) |

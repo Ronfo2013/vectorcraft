@@ -157,3 +157,118 @@ fn type_asked_for_as_outlines_opens_a_file_whose_type_shows_from_its_pdf_part() 
     assert!(r["warnings"].to_string().contains("outlines"), "{r}");
     assert_ne!(names(&s.doc().unwrap().doc.layers), ["Art"], "{r}");
 }
+
+/// A layer named `name` with its states (`visible`, `locked`, `printable`) holding `art`.
+fn layer_with(name: &str, visible: bool, locked: bool, printable: bool, art: &str) -> String {
+    format!(
+        "%AI5_BeginLayer\n{} 1 {} {} 0 0 1 0 79 128 255 0 50 0 Lb\n({name}) Ln\n{art}\nLB\n%AI5_EndLayer--\n",
+        u8::from(visible),
+        u8::from(!locked),
+        u8::from(printable)
+    )
+}
+
+/// Editing data (200 × 100 pt) with nested layers, sublayers, groups, a compound path, a clipping
+/// group, a hidden object, a guide on a non-printing layer and a hidden layer, and the PDF content
+/// its page draws of it (the art that shows, as the PDF part of a `.ai` has it).
+fn nested_data() -> (Vec<u8>, &'static str) {
+    let black = "0 g\n";
+    let inner = format!("0 Ae\nu\n{black}{}f\nU\n{}", ai::rect(50.0, 60.0, 80.0, 90.0), ai::named("Inner"));
+    let ring = format!(
+        "0 Ae\n*u\n{black}1 XR\n{}f\n{}f\n*U\n{}0 XR\n",
+        ai::rect(100.0, 60.0, 140.0, 90.0),
+        ai::rect(110.0, 70.0, 130.0, 80.0),
+        ai::named("Ring")
+    );
+    let figures = format!("0 Ae\nu\n{black}{}f\n{inner}{ring}U\n{}", ai::rect(10.0, 60.0, 40.0, 90.0), ai::named("Figures"));
+    let window = format!(
+        "0 Ae\nq\n{}h\nW\nn\n{black}{}f\nQ\n{}",
+        ai::rect(150.0, 60.0, 190.0, 90.0),
+        ai::rect(160.0, 50.0, 200.0, 100.0),
+        ai::named("Window")
+    );
+    let captions = layer_with("Captions", true, true, true, &window);
+    let hidden_path = format!("1 Xw\n{black}{}f\n0 Xw\n", ai::rect(10.0, 10.0, 40.0, 40.0));
+    let units = ai::layer("Units", &format!("{figures}{captions}{hidden_path}"));
+    let dieline = layer_with("Dieline", true, false, false, &format!("{}(N) *\n", ai::rect(5.0, 5.0, 195.0, 95.0)));
+    let notes = layer_with("Notes", false, false, true, &format!("{black}{}f\n", ai::rect(50.0, 10.0, 80.0, 40.0)));
+    let data = ai::editing_data(200.0, 100.0, &format!("{units}{dieline}{notes}"));
+    (data.into_bytes(), "0 g 10 60 30 30 re f 50 60 30 30 re f 100 60 40 30 re 110 70 20 10 re f* q 150 60 40 30 re W n 160 50 40 50 re f Q")
+}
+
+/// How many nodes under `nodes` (them included) satisfy `p`.
+fn count(nodes: &[Arc<Node>], p: &dyn Fn(&Node) -> bool) -> usize {
+    nodes.iter().map(|n| usize::from(p(n)) + n.children().map_or(0, |c| count(c, p))).sum()
+}
+
+/// The structure [`nested_data`] writes, as opened.
+fn check_nested(s: &Session, what: &str) {
+    let doc = &s.doc().unwrap().doc;
+    assert_eq!(names(&doc.layers), ["Units", "Dieline", "Notes"], "{what}");
+    let units = doc.layers[0].children().unwrap();
+    assert_eq!(names(units), ["Figures", "Captions", ""], "{what}");
+    let figures = units[0].children().unwrap();
+    assert_eq!(names(figures), ["", "Inner", "Ring"], "{what}");
+    assert_eq!(figures[1].children().unwrap().len(), 1, "{what}");
+    assert!(matches!(&figures[2].kind, NodeKind::Compound { children, .. } if children.len() == 2), "{what}: {:?}", figures[2].kind);
+    assert!(matches!(units[1].kind, NodeKind::Layer { .. }) && units[1].locked && units[1].visible, "{what}: a locked sublayer");
+    let captions = units[1].children().unwrap();
+    assert_eq!(names(captions), ["Window"], "{what}");
+    let NodeKind::Group { children, clip: true } = &captions[0].kind else { panic!("{what}: a clipping group: {:?}", captions[0].kind) };
+    assert!(children.len() == 2 && matches!(children[0].kind, NodeKind::Path { clipping: true, .. }), "{what}");
+    assert!(!units[2].visible, "{what}: the hidden object");
+    let NodeKind::Layer { printable: false, children, .. } = &doc.layers[1].kind else { panic!("{what}: Dieline prints") };
+    assert!(children.len() == 1 && matches!(children[0].kind, NodeKind::Path { guide: true, .. }), "{what}: the guide");
+    assert!(!doc.layers[2].visible && doc.layers[2].children().unwrap().len() == 1, "{what}: the hidden layer keeps its art");
+    assert_eq!(count(&doc.layers, &|n| matches!(n.kind, NodeKind::Layer { .. })), 4, "{what}: three layers and a sublayer");
+    assert_eq!(count(&doc.layers, &|n| matches!(n.kind, NodeKind::Path { guide: true, .. })), 1, "{what}");
+}
+
+/// Nested layers, sublayers, groups, compound paths, clipping groups, hidden objects, guides and
+/// hidden and non-printing layers open as written, from a `.ai` with its PDF part, one saved
+/// without it, and an EPS (G9: #951 saw 109 layers for 14, #868 a flat tree, #779 lost guides).
+#[test]
+fn nested_layers_groups_and_guides_open_as_written() {
+    let (data, page) = nested_data();
+    let mut s = Session::new();
+    let r = open(&mut s, "nested.ai", &ai::ai(&compressed(&data), page), json!({})).unwrap();
+    assert!(!r["warnings"].to_string().contains("weren't read"), "{r}");
+    check_nested(&s, "the .ai");
+    open(&mut s, "alone.ai", &ai::ai(&compressed(&data), PLACEHOLDER), json!({})).unwrap();
+    check_nested(&s, "the .ai without its PDF part");
+    let ps = "0 setgray 10 60 30 30 rectfill 50 60 30 30 rectfill newpath 100 60 moveto 140 60 lineto 140 90 lineto 100 90 lineto closepath \
+              110 70 moveto 130 70 lineto 130 80 lineto 110 80 lineto closepath eofill \
+              gsave newpath 150 60 moveto 190 60 lineto 190 90 lineto 150 90 lineto closepath clip newpath 160 50 40 50 rectfill grestore\n";
+    let r = open(&mut s, "nested.eps", &ai::eps(&data, ps), json!({})).unwrap();
+    assert!(!r["warnings"].to_string().contains("weren't read"), "{r}");
+    check_nested(&s, "the EPS");
+}
+
+/// A `.ai` whose private data can't be read opens as its PDF part with a note saying why, rather
+/// than silently (#951 and #868 reported files read as their PDF part with no reason given).
+#[test]
+fn a_file_whose_private_data_cant_be_read_says_why() {
+    let (data, page) = nested_data();
+    let mut s = Session::new();
+    // The first stream missing from the file.
+    let missing = |file: Vec<u8>| String::from_utf8_lossy(&file).replace("/AIPrivateData1 5 0 R", "/AIPrivateData1 99 0 R").into_bytes();
+    let r = open(&mut s, "broken.ai", &missing(ai::ai(&compressed(&data), page)), json!({})).unwrap();
+    let w = r["warnings"].to_string();
+    assert!(w.contains("weren't read from its editing data") && w.contains("private data stream 1"), "{r}");
+    assert_eq!(names(&s.doc().unwrap().doc.layers), ["Page 1"]);
+    // Editing data without layers: a note, and the PDF part's own note stays (the art outside the
+    // artboards is still only in the private data, which supplied nothing).
+    let r = open(&mut s, "bare.ai", &ai::ai(&compressed(b"%!PS-Adobe-3.0\n%%EOF\n"), page), json!({})).unwrap();
+    let w = r["warnings"].as_array().unwrap();
+    assert!(w.contains(&json!(vectorcraft_eps::NO_LAYERS_NOTE)) && w.contains(&json!(vectorcraft_pdf::OFF_ARTBOARD_NOTE)), "{r}");
+    // Data that isn't editing data: the layers weren't read (a loss), with the PDF part's note.
+    let r = open(&mut s, "odd.ai", &ai::ai(&compressed(b"nothing of the kind"), page), json!({})).unwrap();
+    let w = r["warnings"].to_string();
+    assert!(w.contains("weren't read from its editing data") && w.contains("isn't editing data") && w.contains("outside its artboards"), "{r}");
+    // When the layers came from the editing data, the PDF part's note goes.
+    let r = open(&mut s, "nested.ai", &ai::ai(&compressed(&data), page), json!({})).unwrap();
+    assert!(!r["warnings"].to_string().contains("outside its artboards"), "{r}");
+    // Saved without its PDF part: the reason is the error.
+    let e = open(&mut s, "broken.ai", &missing(ai::ai(&compressed(&data), PLACEHOLDER)), json!({})).unwrap_err().to_string();
+    assert!(e.contains("private data stream 1"), "{e}");
+}

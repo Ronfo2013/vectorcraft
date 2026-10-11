@@ -28,3 +28,4 @@ ruzstd = { workspace = true }
 
 [dev-dependencies]
 vectorcraft-testkit = { workspace = true }
+proptest = { workspace = true }
