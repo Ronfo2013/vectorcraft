@@ -264,10 +264,7 @@ fn a_file_whose_private_data_cant_be_read_says_why() {
     // Data that isn't editing data: the layers weren't read (a loss), with the PDF part's note.
     let r = open(&mut s, "odd.ai", &ai::ai(&compressed(b"nothing of the kind"), page), json!({})).unwrap();
     let w = r["warnings"].to_string();
-    assert!(
-        w.contains("weren't read from its editing data") && w.contains("isn't Illustrator editing data") && w.contains("outside its artboards"),
-        "{r}"
-    );
+    assert!(w.contains("weren't read from its editing data") && w.contains("isn't editing data") && w.contains("outside its artboards"), "{r}");
     // When the layers came from the editing data, the PDF part's note goes.
     let r = open(&mut s, "nested.ai", &ai::ai(&compressed(&data), page), json!({})).unwrap();
     assert!(!r["warnings"].to_string().contains("outside its artboards"), "{r}");

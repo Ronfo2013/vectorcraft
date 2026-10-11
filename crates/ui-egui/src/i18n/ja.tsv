@@ -3666,7 +3666,7 @@ theme	Appearance	外観
 @msg	its editing data is for a different page	編集データが別のページのものです
 @msg	its page has text, and its layers have no text objects to put it in	ページにテキストがありますが、レイヤーにはそれを入れるテキストオブジェクトがありません
 @msg	the art on them differs from the page's in {_1}% of it	レイヤー上のアートの {_1}% がページのアートと異なります
-@msg	it isn't Illustrator editing data VectorCraft reads	VectorCraft が読み取る Illustrator の編集データではありません
+@msg	it isn't editing data VectorCraft reads	VectorCraft が読み取る 編集データではありません
 @msg	its `/{kind} X!` object doesn't end	その `/{kind} X!` オブジェクトが終了していません
 @msg	its private data stream {n} can't be decoded (or the data is larger than {_1} MB)	そのプライベートデータストリーム {n} をデコードできません（またはデータが {_1} MB を超えています）
 @msg	its private data stream {n} isn't a stream that can be read	そのプライベートデータストリーム {n} は読み取れるストリームではありません

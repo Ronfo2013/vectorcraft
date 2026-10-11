@@ -3254,7 +3254,7 @@ theme	Appearance	Erscheinungsbild
 @msg	its page has text, and its layers have no text objects to put it in	seine Seite enthält Text, und seine Ebenen haben keine Textobjekte, die ihn aufnehmen könnten
 @msg	its type is to come in as outlines, which only its page has	sein Text soll als Pfade übernommen werden, die nur seine Seite enthält
 @msg	the art on them differs from the page's in {_1}% of it	die Grafik darauf weicht in {_1} % von der der Seite ab
-@msg	it isn't Illustrator editing data VectorCraft reads	es sind keine Illustrator-Bearbeitungsdaten, die VectorCraft liest
+@msg	it isn't editing data VectorCraft reads	es sind keine Bearbeitungsdaten, die VectorCraft liest
 @msg	its `/{kind} X!` object doesn't end	sein `/{kind} X!`-Objekt wird nicht beendet
 @msg	its private data stream {n} can't be decoded (or the data is larger than {_1} MB)	sein privater Datenstrom {n} lässt sich nicht dekodieren (oder die Daten sind größer als {_1} MB)
 @msg	its private data stream {n} isn't a stream that can be read	sein privater Datenstrom {n} ist kein lesbarer Strom

@@ -3350,7 +3350,7 @@ axis	Both	Оба
 @msg	its page has text, and its layers have no text objects to put it in	на его странице есть текст, а на слоях нет текстовых объектов, куда его поместить
 @msg	its type is to come in as outlines, which only its page has	его текст должен прийти в виде контуров, а они есть только на его странице
 @msg	the art on them differs from the page's in {_1}% of it	изображение на слоях отличается от изображения на странице на {_1} % площади
-@msg	it isn't Illustrator editing data VectorCraft reads	это не данные редактирования Illustrator, которые читает VectorCraft
+@msg	it isn't editing data VectorCraft reads	это не данные редактирования, которые читает VectorCraft
 @msg	its `/{kind} X!` object doesn't end	его объект `/{kind} X!` не завершается
 @msg	its private data stream {n} can't be decoded (or the data is larger than {_1} MB)	его поток закрытых данных {n} не удаётся декодировать (или данные больше {_1} МБ)
 @msg	its private data stream {n} isn't a stream that can be read	его поток закрытых данных {n} не является читаемым потоком

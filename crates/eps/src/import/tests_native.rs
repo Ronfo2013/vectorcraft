@@ -253,10 +253,7 @@ fn an_ai_file_that_cant_be_read_through_its_editing_data_keeps_its_pdf_part() {
     // reason given).
     let (d, w, used) = crate::layered_ai(b"nothing", pdf.clone(), vec![], false);
     assert_eq!(d.layers.len(), pdf.layers.len());
-    assert!(
-        !used && w.len() == 1 && w[0].starts_with(crate::LAYERS_UNREAD) && w[0].contains("isn't Illustrator editing data") && crate::is_loss(&w[0]),
-        "{w:?}"
-    );
+    assert!(!used && w.len() == 1 && w[0].starts_with(crate::LAYERS_UNREAD) && w[0].contains("isn't editing data") && crate::is_loss(&w[0]), "{w:?}");
     // Editing data (its header) without layers: its PDF part is all its art, nothing is lost.
     let (_, w, used) = crate::layered_ai(b"%!PS-Adobe-3.0\n%%Creator: Adobe Illustrator(R) 30.0\n%%EOF\n", pdf.clone(), vec![], false);
     assert!(!used);

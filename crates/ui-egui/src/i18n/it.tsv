@@ -3354,7 +3354,7 @@ axis	Both	Entrambi
 @msg	its page has text, and its layers have no text objects to put it in	la sua pagina ha del testo e i suoi livelli non hanno oggetti di testo in cui metterlo
 @msg	its type is to come in as outlines, which only its page has	il suo testo deve arrivare come contorni, che ha solo la sua pagina
 @msg	the art on them differs from the page's in {_1}% of it	l'illustrazione dei livelli differisce da quella della pagina per il {_1}% della sua superficie
-@msg	it isn't Illustrator editing data VectorCraft reads	non sono dati di modifica di Illustrator che VectorCraft legge
+@msg	it isn't editing data VectorCraft reads	non sono dati di modifica che VectorCraft legge
 @msg	its `/{kind} X!` object doesn't end	il suo oggetto `/{kind} X!` non termina
 @msg	its private data stream {n} can't be decoded (or the data is larger than {_1} MB)	il suo flusso di dati privati {n} non si può decodificare (o i dati superano {_1} MB)
 @msg	its private data stream {n} isn't a stream that can be read	il suo flusso di dati privati {n} non è un flusso leggibile

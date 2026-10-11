@@ -1190,7 +1190,7 @@ pub fn layered_ai(private: &[u8], visible: Document, warnings: Vec<String>, outl
                 all.push(NO_LAYERS_NOTE.to_string());
                 return (visible, all, false);
             }
-            (Some(data), Err("it isn't Illustrator editing data VectorCraft reads".to_string()))
+            (Some(data), Err("it isn't editing data VectorCraft reads".to_string()))
         }
         Ok(data) => {
             let r = build(&data, Some(&visible), Page::Artboard, outlined);
@@ -1220,7 +1220,8 @@ pub fn layered_ai(private: &[u8], visible: Document, warnings: Vec<String>, outl
 /// comments)?
 fn is_editing_data(data: &[u8]) -> bool {
     let head = data.get(..data.len().min(4096)).unwrap_or_default();
-    [&b"%!PS-Adobe"[..], b"%%AI8_CreatorVersion", b"%AI5_FileFormat", b"%%Creator: Adobe Illustrator"]
+    // brand-ok: the markers the files themselves carry, never shown.
+    [&b"%!PS-Adobe"[..], b"%%AI8_CreatorVersion", b"%AI5_FileFormat", b"%%Creator: Adobe Illustrator"] // brand-ok
         .iter()
         .any(|m| super::lex::find(head, m).is_some())
 }
