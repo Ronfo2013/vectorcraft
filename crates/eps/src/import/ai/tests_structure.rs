@@ -331,13 +331,13 @@ fn objects_of_kinds_it_doesnt_read_are_left_out_with_a_loss_note() {
     let s = read(data.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
     check(&s.doc, &layers);
     let note = s.warnings.iter().find(|w| w.starts_with(super::read::OBJECTS_LEFT_OUT)).unwrap_or_else(|| panic!("{:?}", s.warnings));
-    assert!(note.ends_with("(Mesh: 1)"), "{note}");
+    assert!(note.contains("Mesh: 1"), "{note}");
     assert!(crate::is_loss(note));
     assert!(!s.warnings.iter().any(|w| w.starts_with(super::read::OPERATORS_SKIPPED)), "{:?}", s.warnings);
     // Two of them: both counted.
     let twice = data.replacen("/End X!\n", "/End X!\n/Mesh X!\n%_[1] /P X#\n/End X!\n", 1);
     let s = read(twice.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
-    assert!(s.warnings.iter().any(|w| w.ends_with("(Mesh: 2)")), "{:?}", s.warnings);
+    assert!(s.warnings.iter().any(|w| w.contains("Mesh: 2")), "{:?}", s.warnings);
     // An object inside the object is its data: its end doesn't end the outer one, whose data
     // after it (bare arrays, a `/Document` dictionary) stays nothing: the artboards are the crop
     // marks', the second path is still read, one object counted.
@@ -350,7 +350,7 @@ fn objects_of_kinds_it_doesnt_read_are_left_out_with_a_loss_note() {
     );
     let s = read(nested.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
     check(&s.doc, &layers);
-    assert!(s.warnings.iter().any(|w| w.ends_with("(Mesh: 1)")), "{:?}", s.warnings);
+    assert!(s.warnings.iter().any(|w| w.contains("Mesh: 1")), "{:?}", s.warnings);
     assert_eq!(s.doc.artboards.len(), 1);
     assert_eq!(s.doc.artboards[0].rect, kurbo::Rect::new(0.0, 0.0, 200.0, 100.0), "the crop marks, not the dictionary in the object");
     // One that doesn't end swallows the layer's end: damaged.

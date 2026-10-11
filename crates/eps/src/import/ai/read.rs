@@ -277,6 +277,8 @@ struct Reader<'a> {
     in_object: Option<String>,
     /// How many objects are open inside that one (each `/Kind X!` in it, until its `/End X!`).
     object_depth: usize,
+    /// The gradient mesh being read (`/Mesh X!`), from its `X#` entries.
+    mesh: Option<super::mesh::Builder>,
     /// The header's bounding boxes and template box.
     bbox: Option<[f64; 4]>,
     hires: Option<[f64; 4]>,
@@ -426,6 +428,7 @@ impl<'a> Reader<'a> {
             unread_objects: Default::default(),
             in_object: None,
             object_depth: 0,
+            mesh: None,
             bbox: None,
             hires: None,
             template: None,
@@ -814,12 +817,21 @@ impl<'a> Reader<'a> {
                         if self.object_depth > 0 {
                             self.object_depth -= 1;
                         } else if let Some(kind) = self.in_object.take() {
-                            *self.unread_objects.entry(kind).or_default() += 1;
-                            self.after_object = false;
+                            match self.mesh.take() {
+                                // A gradient mesh: its patches as mesh objects (see `mesh`).
+                                Some(builder) => self.end_mesh(builder, hidden)?,
+                                None => {
+                                    *self.unread_objects.entry(kind).or_default() += 1;
+                                    self.after_object = false;
+                                }
+                            }
                         }
                     }
                     (Some(_), true) => self.object_depth = self.object_depth.saturating_add(1),
-                    (Some(n), false) if n != "End" => self.in_object = Some(n.to_string()),
+                    (Some(n), false) if n != "End" => {
+                        self.in_object = Some(n.to_string());
+                        self.mesh = (n == "Mesh").then(super::mesh::Builder::default);
+                    }
                     // `X!` without a kind, or an `/End` that ends nothing: skipped like any other.
                     _ => {
                         if self.skipped.len() < 16 {
@@ -830,7 +842,13 @@ impl<'a> Reader<'a> {
                 return Ok(());
             }
             _ if self.in_object.is_some() => {
-                self.operands();
+                let vals = self.operands();
+                if w == "X#"
+                    && self.object_depth == 0
+                    && let Some(b) = self.mesh.as_mut()
+                {
+                    b.entry(&vals);
+                }
                 return Ok(());
             }
             ":" => return self.begin_obj(hidden),
@@ -1057,6 +1075,34 @@ impl<'a> Reader<'a> {
         n.name = Some(story.map_or_else(|| TEXT_SLOT.to_string(), |s| format!("{TEXT_SLOT}{s}:{frame}")));
         let hidden = self.obj_hidden;
         self.add(n, hidden)
+    }
+
+    /// A gradient mesh object ends: its patches (in art space) become mesh objects in a group,
+    /// which the markers after the object name and set like any object. Patches that couldn't be
+    /// read are counted as left out; a mesh with none is an unread object.
+    fn end_mesh(&mut self, builder: super::mesh::Builder, hidden: bool) -> Result<(), String> {
+        let (meshes, skipped) = builder.finish();
+        if skipped > 0 {
+            *self.unread_objects.entry("Mesh patch".into()).or_default() += skipped;
+        }
+        if meshes.is_empty() {
+            *self.unread_objects.entry("Mesh".into()).or_default() += 1;
+            self.after_object = false;
+            return Ok(());
+        }
+        let to_doc = self.space();
+        let gs = self.gs.clone();
+        let children: Vec<Arc<Node>> = meshes
+            .into_iter()
+            .map(|mut m| {
+                m.transform(to_doc);
+                Arc::new(self.new_node(NodeKind::Mesh(m), &gs))
+            })
+            .collect();
+        let mut group = self.new_node(NodeKind::Group { children, clip: false }, &gs);
+        group.opacity = gs.opacity;
+        group.blend = gs.blend;
+        self.add(group, hidden)
     }
 
     /// Non-native art (`/ForeignObject`): the content of a placed PDF, which Illustrator shows but

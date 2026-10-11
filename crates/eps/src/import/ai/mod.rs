@@ -18,6 +18,7 @@
 //! did before (the printed page, or the PDF), with a warning saying why.
 
 mod lex;
+mod mesh;
 mod obj;
 mod paint;
 mod read;
@@ -32,6 +33,8 @@ pub(crate) use read::{slot_frame, slot_of};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_mesh;
 #[cfg(test)]
 mod tests_structure;
 

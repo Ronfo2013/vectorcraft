@@ -355,7 +355,7 @@ fn every_artboard_is_compared_with_its_page() {
     let (d, w, used) = crate::layered_ai(&private(&art), pdf_with(None), vec![], false);
     assert!(used);
     assert_eq!(names(&d), ["Art"], "{w:?}");
-    assert!(w.iter().any(|w| w.starts_with(crate::import::ai::OBJECTS_LEFT_OUT) && w.ends_with("(Mesh: 1)") && crate::is_loss(w)), "{w:?}");
+    assert!(w.iter().any(|w| w.starts_with(crate::import::ai::OBJECTS_LEFT_OUT) && w.contains("Mesh: 1") && crate::is_loss(w)), "{w:?}");
     assert!(!w.iter().any(|w| w.starts_with(super::native::UNCOMPARED)), "every artboard was compared: {w:?}");
     // An artboard of another size than its page isn't compared: with an object left out (or an
     // operator skipped) anywhere, that is said, naming it, as a loss.
