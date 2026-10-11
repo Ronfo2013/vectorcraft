@@ -32,6 +32,8 @@ pub(crate) use read::{slot_frame, slot_of};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_structure;
 
 /// Largest editing data read, decompressed (bytes).
 pub const MAX_DATA: u64 = 256 << 20;

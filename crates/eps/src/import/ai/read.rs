@@ -701,7 +701,15 @@ impl<'a> Reader<'a> {
     /// `kids` with the clipping paths among them (indexes `clips`) first, several as one compound
     /// path → the children and whether they clip.
     fn clip_first(&mut self, kids: Vec<Node>, clips: &[usize]) -> (Vec<Arc<Node>>, bool) {
-        let (mut clip, rest): (Vec<Indexed>, Vec<Indexed>) = kids.into_iter().enumerate().partition(|(i, _)| clips.contains(i));
+        // Which children clip, by index (a layer may hold thousands of objects and clips).
+        let mut is_clip = vec![false; kids.len()];
+        for &i in clips {
+            if let Some(c) = is_clip.get_mut(i) {
+                *c = true;
+            }
+        }
+        let (mut clip, rest): (Vec<Indexed>, Vec<Indexed>) =
+            kids.into_iter().enumerate().partition(|(i, _)| is_clip.get(*i).copied().unwrap_or(false));
         let clip_node = match clip.len() {
             0 => None,
             1 => clip.pop().map(|(_, n)| n),

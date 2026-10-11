@@ -58,6 +58,10 @@ pub(crate) struct Ocgs {
     view_auto: HashSet<ObjectIdentifier>,
     /// The groups placed in the layer order.
     placed: HashSet<usize>,
+    /// The layer each group stands for ([`Ocgs::canonical`]).
+    canon: Vec<usize>,
+    /// The groups that have marked content on a page read so far.
+    settled: Vec<bool>,
 }
 
 impl Ocgs {
@@ -158,7 +162,75 @@ impl Ocgs {
         let name = if name.is_empty() { format!("Layer {}", self.list.len() + 1) } else { name };
         self.list.push(Ocg { name, on, print, locked, parent: None });
         self.index.insert(id, self.list.len() - 1);
+        self.canon.push(self.list.len() - 1);
+        self.settled.push(false);
         self.list.len() - 1
+    }
+
+    /// The layer group `g` stands for: itself, or the group of an earlier page it repeats
+    /// ([`Ocgs::merge_repeats`]).
+    pub fn canonical(&self, g: usize) -> usize {
+        self.canon.get(g).copied().unwrap_or(g)
+    }
+
+    /// The layer group `g` is listed under in the layer order (a sublayer of it).
+    pub fn parent_of(&self, g: usize) -> Option<usize> {
+        self.list.get(g)?.parent.map(|p| self.canonical(p))
+    }
+
+    /// How deep group `g` is listed in the layer order.
+    fn depth(&self, g: usize) -> usize {
+        let mut depth = 0;
+        let mut at = g;
+        while let Some(p) = self.parent_of(at).filter(|_| depth < MAX_NESTING) {
+            depth += 1;
+            at = p;
+        }
+        depth
+    }
+
+    /// Merge the groups a page marks (`scan`, its tags rewritten) with the layers of the pages
+    /// before it: a group marking content for the first time that has the name, states and parent
+    /// of a layer of an earlier page, which this page doesn't mark itself, is that layer. A
+    /// document's layers are the same on every artboard, and a file of many artboards may write
+    /// its layers again for each page (#951: a book of 100 pages and 14 layers opened with 1400).
+    /// Two groups of one name marked on the same page stay two layers.
+    pub fn merge_repeats(&mut self, scan: &mut Scan) {
+        let mut on_page: Vec<usize> = vec![];
+        let mut seen = HashSet::new();
+        for g in scan.tags.iter().filter_map(|(_, g)| *g) {
+            if seen.insert(g) {
+                on_page.push(g);
+            }
+        }
+        // Parents before their sublayers, so a sublayer compares its parent's layer.
+        on_page.sort_by_key(|g| self.depth(*g));
+        let mut marked: HashSet<usize> = on_page.iter().map(|g| self.canonical(*g)).collect();
+        for &g in &on_page {
+            if self.settled.get(g).copied().unwrap_or(true) || self.canonical(g) != g {
+                continue;
+            }
+            let Some(me) = self.list.get(g) else { continue };
+            let parent = self.parent_of(g);
+            let twin =
+                (0..g).filter(|&c| self.canonical(c) == c && self.settled.get(c).copied().unwrap_or(false) && !marked.contains(&c)).find(|&c| {
+                    self.list.get(c).is_some_and(|o| o.name == me.name && o.on == me.on && o.print == me.print && o.locked == me.locked)
+                        && self.parent_of(c) == parent
+                });
+            if let (Some(c), Some(slot)) = (twin, self.canon.get_mut(g)) {
+                *slot = c;
+                // This page marks that layer now: another group of the name stays its own layer.
+                marked.insert(c);
+            }
+        }
+        for &g in &on_page {
+            if let Some(s) = self.settled.get_mut(g) {
+                *s = true;
+            }
+        }
+        for g in scan.tags.iter_mut().filter_map(|(_, g)| g.as_mut()) {
+            *g = self.canonical(*g);
+        }
     }
 
     /// Does the interpreter leave out the art of some group (off in the default configuration)?

@@ -138,15 +138,38 @@ const MAX_PRIVATE: usize = 256 << 20;
 /// streams in order, joined. `None` for a PDF without them (or with a stream that can't be read).
 /// What it holds is the editor's own copy of the art (see `vectorcraft_eps::layered_ai`).
 pub fn illustrator_data(bytes: &[u8], password: Option<&str>) -> Option<Vec<u8>> {
+    illustrator_data_checked(bytes, password)?.ok()
+}
+
+/// [`illustrator_data`], saying why a file that has private data streams gives none: `None` for a
+/// PDF without them, `Some(Err(why))` for one whose streams can't be read (the import then says
+/// why the layers come from the PDF part instead of silently reading it as a plain PDF: #951, #868).
+pub fn illustrator_data_checked(bytes: &[u8], password: Option<&str>) -> Option<Result<Vec<u8>, String>> {
     let pdf = open(bytes, password).ok()?;
     let page = pdf.pages().first()?;
     let private = page.raw().get::<Dict<'_>>(b"PieceInfo")?.get::<Dict<'_>>(PRIVATE_DATA_OWNER)?.get::<Dict<'_>>(b"Private")?;
     let mut data = vec![];
+    let mut streams = 0u32;
     for n in 1..=100_000u32 {
-        let Some(stream) = private.get::<Stream<'_>>(format!("AIPrivateData{n}").as_bytes()) else { break };
-        data.extend_from_slice(&inflated(&stream, MAX_PRIVATE - data.len())?);
+        let key = format!("AIPrivateData{n}");
+        let Some(stream) = private.get::<Stream<'_>>(key.as_bytes()) else {
+            if private.keys().any(|k| k.as_ref() == key.as_bytes()) {
+                return Some(Err(format!("its private data stream {n} isn't a stream that can be read")));
+            }
+            break;
+        };
+        streams += 1;
+        match inflated(&stream, MAX_PRIVATE - data.len()) {
+            Some(d) => data.extend_from_slice(&d),
+            None => return Some(Err(format!("its private data stream {n} can't be decoded (or the data is larger than {} MB)", MAX_PRIVATE >> 20))),
+        }
     }
-    (!data.is_empty()).then_some(data)
+    if data.is_empty() {
+        // Empty streams are no data; streams the numbering skips can't be read.
+        return (streams == 0 && private.keys().any(|k| k.starts_with(b"AIPrivateData")))
+            .then(|| Err("its private data streams aren't numbered from 1".to_string()));
+    }
+    Some(Ok(data))
 }
 
 /// `stream` decoded, up to `most` bytes: the decoder is run here rather than by the PDF reader's

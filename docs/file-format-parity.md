@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (EPS page and stacked text strokes through the layers, #1102) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (G9: layer structure of `.ai`/EPS editing data under property tests; repeated per-page PDF layers merged; private data that can't be read is said, #951, #868, #779, #758) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every format Illustrator opens, places, saves or exports, against VectorCraft's format table (`FORMATS`,
 `OPEN_EXTS`, `PLACE_EXTS` in `crates/engine/src/cmd/fileio/mod.rs`). Illustrator's list comes from its public
@@ -35,10 +35,24 @@ private editing data. VectorCraft:
 - **Writes** a PDF-compatible `.ai` (Save As › `ai`): Illustrator opens it as plain art. It never writes
   Illustrator's private editing data, which is undocumented.
 - **Known failures in users' files:** layer structure flattened or multiplied (#951: 109 layers instead of
-  14; #868: round trip with Illustrator 2018 loses layers and groups), guides and non-printing construction
-  lines lost (#779), some files 4× slower to open since the editing data is read whole (#758), live effects,
-  brushes and symbols come in as their drawn look (#637; pattern fills are read since #1025); legacy `.ai`
-  without the prolog opens since #1027, its legacy type (`To` … `TO`) not read yet.
+  14, then 1400 for a 100-page book; #868: round trip with Illustrator 2018 loses layers and groups). Both
+  files opened as their **PDF part**, not their editing data, and said nothing of why. What is settled
+  without the files (2026-10-11): the editing-data reader keeps any nesting of layers, sublayers, groups,
+  compound paths, clipping groups, hidden and locked objects and guides, by a property test over random
+  trees (`crates/eps/src/import/ai/tests_structure.rs`, also through `ai_alone`) and end to end through
+  `document.open` of a `.ai`, a `.ai` without its PDF part and an EPS (`tests_aiimport.rs`); a PDF part that
+  writes its layers again for every page (same names, states and parents) opens with one layer per name,
+  not one per page (`tests_import_layers.rs`); and a `.ai` whose private data streams can't be read, or
+  decode to data without layers, says so in the open notes instead of silently reading the PDF part. What
+  still needs the real files: *why* their editing data wasn't used (an unknown operator, a text object the
+  page has no type for, a page-size mismatch, or a stream the PDF reader can't decode: the note now names
+  it, so the next report will say). Guides and non-printing construction lines (#779) are read from the
+  editing data (ruler and path guides as `(N) *`, the layer's print flag); they are lost whenever the file
+  falls back to its PDF part, which has none. Open speed (#758): the reader has no step growing with the
+  square of the file (50 000 objects in nested layers read and import in 0.6 s in the optimized test profile, test
+  `fifty_thousand_objects_read_in_bounded_time`); what remains is the page comparison, which draws the page.
+  Live effects, brushes and symbols come in as their drawn look (#637; pattern fills are read since #1025);
+  legacy `.ai` without the prolog opens since #1027, its legacy type (`To` … `TO`) not read yet.
 - Estimate: **~65%** for real exchange with Illustrator users (open: ~75%; save: PDF-compatible only).
   Closing the open-side issues: 10–20 h with users' files.
 
@@ -80,6 +94,7 @@ the app's own editing copy of a file (an EPS after its `%%EOF`, a `.ai`'s `AIPri
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | G9 audit: layer/group/guide structure of the editing data under property tests; PDF layers repeated per page merged; unreadable private data named in the notes (#951, #868, #779, #758) |
 | 2026-10-11 | minor | An EPS keeps its own page and its stacked text strokes through its layers (#1102) |
 | 2026-10-11 | minor | A `.ai` read as its PDF part keeps its artboard layout from the editing data (#1068) |
 | 2026-10-11 | minor | Spot colours defined in Lab keep their Lab values, from the editing data and from a PDF part whose ink alternate is an ICC Lab profile (#1032) |

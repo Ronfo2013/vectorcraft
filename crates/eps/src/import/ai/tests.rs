@@ -10,7 +10,7 @@ use vectorcraft_doc::{AppearanceItem, ColorMode, Document, Knockout, LayerColor,
 use super::*;
 
 /// Editing data: header comments (crop marks 0 0 200 100), then `body`.
-fn stream(body: &str) -> String {
+pub(super) fn stream(body: &str) -> String {
     format!(
         "%!PS-Adobe-3.0\n%%Creator: test\n%AI5_FileFormat 14.0\n%AI3_Cropmarks: 0 0 200 100\n%%EndComments\n%%BeginProlog\n%%EndProlog\n%%BeginSetup\n%%EndSetup\n{body}\n%%PageTrailer\ngsave annotatepage grestore showpage\n%%Trailer\n%%EOF\n"
     )
@@ -37,7 +37,7 @@ fn fill(n: &Node) -> Paint {
     n.appearance.fill().map(|f| f.paint.clone()).unwrap_or_default()
 }
 
-fn rect_path(x0: f64, y0: f64, x1: f64, y1: f64) -> String {
+pub(super) fn rect_path(x0: f64, y0: f64, x1: f64, y1: f64) -> String {
     format!("{x0} {y0} m\n{x0} {y1} L\n{x1} {y1} L\n{x1} {y0} L\n{x0} {y0} L\n")
 }
 

@@ -41,7 +41,9 @@ const TEXT_LEFT_OUT: &str = "text objects on hidden layers or hidden objects cou
 /// The same for a file without a page to take shown type from.
 const TYPE_LEFT_OUT: &str = "text objects of kinds VectorCraft doesn't read from the file's text document yet are left out";
 const ART_LEFT_OUT: &str = "hidden layers have art this can't read";
-const LAYERS_UNREAD: &str = "the file's layers weren't read";
+/// The start of the note given when a file's layers come from its page or PDF part instead of
+/// its editing data; the reason follows.
+pub const LAYERS_UNREAD: &str = "the file's layers weren't read";
 
 /// Does this import note say that the file has something the document doesn't (hidden text, art or
 /// layers that could not be read)? Writing the document over the file would lose it for good.
@@ -1064,11 +1066,17 @@ pub(super) fn layered(ps: &[u8], visible: Imported) -> Imported {
 /// `outlined`: the PDF part's type was read as outlines (a file whose type shows then comes in as
 /// its PDF part).
 pub fn layered_ai(private: &[u8], visible: Document, warnings: Vec<String>, outlined: bool) -> (Document, Vec<String>) {
-    let Ok(data) = ai::decode_private(private) else { return (visible, warnings) };
-    if !has_layers(&data) {
-        return (visible, warnings);
-    }
-    match build(&data, Some(&visible), Page::Artboard, outlined) {
+    // Whatever stops the layers being read is said (#951, #868: files opened as their PDF part
+    // with no note saying why).
+    let (data, result) = match ai::decode_private(private) {
+        Ok(data) if !has_layers(&data) => (Some(data), Err("it has no layers".to_string())),
+        Ok(data) => {
+            let r = build(&data, Some(&visible), Page::Artboard, outlined);
+            (Some(data), r)
+        }
+        Err(why) => (None, Err(why)),
+    };
+    match result {
         Ok((done, notes)) => {
             let mut all = warnings;
             all.extend(notes.into_iter().filter(|n| !all.contains(n)).collect::<Vec<_>>());
@@ -1078,7 +1086,9 @@ pub fn layered_ai(private: &[u8], visible: Document, warnings: Vec<String>, outl
             let mut all = warnings;
             all.push(format!("{LAYERS_UNREAD} from its editing data ({why}): they come from its PDF part"));
             let mut visible = visible;
-            place_pages(&ai::artboards(&data), &mut visible);
+            if let Some(data) = data {
+                place_pages(&ai::artboards(&data), &mut visible);
+            }
             (visible, all)
         }
     }

@@ -226,10 +226,11 @@ fn an_ai_file_gets_its_layers_and_the_art_outside_its_artboard() {
 #[test]
 fn an_ai_file_that_cant_be_read_through_its_editing_data_keeps_its_pdf_part() {
     let pdf = pdf_part(10.0, 86.0);
-    // No editing data this reads.
+    // No editing data this reads: the PDF part, and a note saying why (#951, #868 reported files
+    // that came in as their PDF part with no reason given).
     let (d, w) = crate::layered_ai(b"nothing", pdf.clone(), vec![], false);
     assert_eq!(d.layers.len(), pdf.layers.len());
-    assert!(w.is_empty());
+    assert!(w.iter().any(|w| w.starts_with(crate::LAYERS_UNREAD) && w.contains("no layers")), "{w:?}");
     // Editing data that isn't for this page.
     let other = native(&layer("Jig", true, &square(10, 10))).replace("%AI3_Cropmarks: 0 0 100 100", "%AI3_Cropmarks: 0 0 50 50");
     let (d, w) = crate::layered_ai(&private(&other), pdf.clone(), vec![], false);

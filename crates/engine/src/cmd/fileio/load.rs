@@ -139,15 +139,23 @@ pub fn load(name: &str, bytes: &[u8]) -> Result<Loaded> {
 /// A PDF-compatible `.ai` read through the editor's own copy of its art, which it carries: its
 /// layers and hidden objects as they were, and the art outside its artboard (its PDF part has
 /// only what is on the artboards), as an EPS of the editor is read. Anything else as it was.
-fn through_editing_data(bytes: &[u8], opts: &LoadOptions, doc: Document, warnings: Vec<String>) -> (Document, Vec<String>) {
+fn through_editing_data(bytes: &[u8], opts: &LoadOptions, doc: Document, mut warnings: Vec<String>) -> (Document, Vec<String>) {
     if opts.pages.is_some() || !opts.layers || !opts.editing_data {
         return (doc, warnings);
     }
-    let Some(private) = vectorcraft_pdf::illustrator_data(bytes, opts.password.as_deref()) else { return (doc, warnings) };
+    let private = match vectorcraft_pdf::illustrator_data_checked(bytes, opts.password.as_deref()) {
+        Some(Ok(private)) => private,
+        // Private data it can't read is said, like editing data it can't read (#951, #868).
+        Some(Err(why)) => {
+            warnings.push(format!("{} from its editing data ({why}): they come from its PDF part", vectorcraft_eps::LAYERS_UNREAD));
+            return (doc, warnings);
+        }
+        None => return (doc, warnings),
+    };
     let outlined = opts.text_as == vectorcraft_pdf::TextAs::Outlines;
     let (doc, mut warnings) = vectorcraft_eps::layered_ai(&private, doc, warnings, outlined);
     // The note that the art outside the artboard is lost is the reason the layers weren't read.
-    if warnings.iter().any(|w| w.starts_with("the file's layers weren't read from its editing data")) {
+    if warnings.iter().any(|w| w.starts_with(vectorcraft_eps::LAYERS_UNREAD)) {
         return (doc, warnings);
     }
     warnings.retain(|w| w != vectorcraft_pdf::OFF_ARTBOARD_NOTE);
@@ -161,9 +169,10 @@ fn from_editing_data_alone(bytes: &[u8], opts: &LoadOptions) -> Option<Result<(D
     if opts.pages.is_some() || !opts.layers || !opts.editing_data {
         return None;
     }
-    let private = vectorcraft_pdf::illustrator_data(bytes, opts.password.as_deref())?;
+    let private = vectorcraft_pdf::illustrator_data_checked(bytes, opts.password.as_deref())?;
     Some(
-        vectorcraft_eps::ai_alone(&private)
+        private
+            .and_then(|p| vectorcraft_eps::ai_alone(&p))
             .map_err(|why| err(format!("this file was saved without PDF compatibility, and its editing data can't be read ({why})"))),
     )
 }

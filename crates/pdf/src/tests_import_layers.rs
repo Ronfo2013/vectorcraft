@@ -93,6 +93,40 @@ fn pages_share_the_layers_of_their_groups() {
     assert!(x > d.artboards[1].rect.x0, "{x}");
 }
 
+/// A file of several artboards may write its layers again for each page, as groups of their own
+/// with the same names: they are the same layers (#951: 14 layers on 100 pages opened as 1400).
+/// Two groups of one name marked on the same page stay two layers.
+#[test]
+fn layers_written_again_for_each_page_are_the_same_layers() {
+    let first = first_extra(3);
+    let group = |name: &str| format!("<< /Type /OCG /Name ({name}) >>");
+    // Page 1 and 2 each have their own "Shapes" and "Notes"; page 3 marks two "Shapes" of its own.
+    let objs: Vec<String> = ["Shapes", "Notes", "Shapes", "Notes", "Shapes", "Shapes"].iter().map(|n| group(n)).collect();
+    let refs: Vec<String> = (0..6).map(|i| format!("{} 0 R", first + i)).collect();
+    let catalog = format!("/OCProperties << /OCGs [{0}] /D << /Order [{0}] >> >> ", refs.join(" "));
+    let page = |a: usize, b: usize| PdfPage {
+        resources: format!("/Properties << /MC0 {} 0 R /MC1 {} 0 R >>", first + a, first + b),
+        ..PdfPage::new(100.0, 100.0, "/OC /MC0 BDC 1 0 0 rg 10 10 30 30 re f EMC /OC /MC1 BDC 0 0 1 rg 50 50 30 30 re f EMC")
+    };
+    let extra: Vec<&str> = objs.iter().map(String::as_str).collect();
+    let d = import(&pdf_with_catalog(&[page(0, 1), page(2, 3), page(4, 5)], &extra, &catalog, None)).unwrap();
+    assert_eq!(names(&d), ["Shapes", "Notes", "Shapes"]);
+    assert_eq!(colors(&d.layers[0]).len(), 3, "the first two pages' red squares and page 3's first");
+    assert_eq!(colors(&d.layers[1]).len(), 2);
+    assert_eq!(colors(&d.layers[2]).len(), 1, "page 3's second Shapes is another layer");
+    // A group that differs in state is another layer too.
+    let objs = [group("Shapes"), "<< /Type /OCG /Name (Shapes) /Usage << /Print << /PrintState /OFF >> >> >>".to_string()];
+    let first = first_extra(2);
+    let catalog = format!("/OCProperties << /OCGs [{0} 0 R {1} 0 R] /D << /Order [{0} 0 R {1} 0 R] >> >> ", first, first + 1);
+    let one = |g: usize| PdfPage {
+        resources: format!("/Properties << /MC0 {} 0 R >>", first + g),
+        ..PdfPage::new(100.0, 100.0, "/OC /MC0 BDC 1 0 0 rg 10 10 30 30 re f EMC")
+    };
+    let d = import(&pdf_with_catalog(&[one(0), one(1)], &[&objs[0], &objs[1]], &catalog, None)).unwrap();
+    assert_eq!(names(&d), ["Shapes", "Shapes"]);
+    assert!(printable(&d.layers[0]) && !printable(&d.layers[1]));
+}
+
 #[test]
 fn groups_marked_inside_forms_and_clips_reach_their_layers() {
     let (objs, catalog, ids) = groups(1, "/OFF [{B}]");
