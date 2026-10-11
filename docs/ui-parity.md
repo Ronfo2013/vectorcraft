@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (G1: Alt swaps Direct and Group Selection, Shift-click subtracts segments and grouped objects, Scissors/Pencil/Knife Alt behaviours from the shortcut reference; earlier: a marquee needs to touch a path, #1103) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (bezier drag previews follow the pointer back into the window and to the release, #834; units survive an SVG save, #864; G1: Alt swaps Direct and Group Selection, Shift-click subtracts segments and grouped objects, Scissors/Pencil/Knife Alt behaviours from the shortcut reference; earlier: a marquee needs to touch a path, #1103) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft's tools, handles, snapping and panels behave next to Illustrator's. A vector illustrator's
 trust is in the details: where a handle lands, what Shift and Alt do mid-drag, what a smart guide snaps to,
@@ -38,7 +38,7 @@ tools, never checked side by side) isn't captured row by row.
 
 | Behaviour (Illustrator, public docs) | Status | Notes |
 |---|---|---|
-| Click: corner anchor; drag: smooth anchor with symmetric handles | done | `pen.rs` |
+| Click: corner anchor; drag: smooth anchor with symmetric handles | done | `pen.rs`; the drag's preview follows every pointer position, back into the window after leaving it and in the release's frame, and the release commits where the pointer let go (#834) |
 | Shift constrains segments and handles to 45° | done | Illustrator's Constrain Angle preference is honoured (`constrainAngle`) |
 | Alt mid-drag splits the handles (only the outgoing follows) | done | keeps the curve already shaped |
 | Space mid-drag repositions the anchor, handles and all | done | |
@@ -68,7 +68,7 @@ tools, never checked side by side) isn't captured row by row.
 | Alt switches between Direct Selection and Group Selection: with Alt, Direct Selection picks the whole path by an anchor or a segment, then each click adds the next enclosing group (stopping at the isolated container); Group Selection with Alt picks and highlights anchors | done | [shortcut reference › Work with selections](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html), [Select object groups](https://helpx.adobe.com/illustrator/desktop/manage-objects/select-objects/select-object-groups-and-nested-object-groups.html); `direct.rs` `alt_swaps_direct_selection_and_group_selection` |
 | Shift-click subtracts: a segment Shift-clicked with Direct Selection joins the selection (its two anchors) or, selected, leaves it, the rest staying; Group Selection's Shift-click on a selected object (or its selected group) takes it out on release, a Shift-drag moving it instead | done | [shortcut reference › Work with selections](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html); `shift_click_a_segment_adds_it_to_the_selection_or_takes_it_out`, `shift_click_with_group_selection_takes_the_object_out_on_release` |
 | Handles shown are the handles that drag; tolerance from Selection & Anchor Display | done | #494 |
-| Drag a handle with Shift (45° about its anchor), Alt (move one handle alone) | done | handles snap to smart guides |
+| Drag a handle with Shift (45° about its anchor), Alt (move one handle alone) | done | handles snap to smart guides; handle and anchor drags no longer stall when the pointer leaves and re-enters the window (#834) |
 | Show handles when multiple anchors are selected; Highlight anchors on mouse over; anchor and handle size | done | Preferences › Selection & Anchor Display |
 | Convert selected anchors to corner/smooth from the Control bar and Properties | done | |
 | Cut path at selected anchors, Remove Anchor Points, Delete removes segments | done | |
@@ -117,7 +117,7 @@ tools, never checked side by side) isn't captured row by row.
 | Arrow keys nudge by Keyboard Increment (0.001–1296 pt); Shift ×10; Alt copies | done | |
 | Number fields: Up/Down step, Shift ×10, Cmd/Ctrl ÷10, wheel over a focused field | done | Shift+arrow in the Stroke weight field doesn't step by 10 (#991) |
 | Arithmetic in fields (`+ - * /`) and unit suffixes (`3 mm`, `1in`, `2p6`) | done | `Unit::parse`; mixed units in one expression not verified |
-| Units: pt, pc, in, mm, cm, px, ft-in, m, yd, ft; General/Stroke/Type units | done | units preference reverting to points on SVG output reported (#864) |
+| Units: pt, pc, in, mm, cm, px, ft-in, m, yd, ft; General/Stroke/Type units | done | the document's units survive an SVG save and open (#864 fixed: the root size carries them); see [file-format-parity.md](file-format-parity.md) |
 | Field precision: 3 decimals for steps; values kept as f64 | done | |
 | Scrubby labels (beyond Illustrator) | done | #400 |
 | Dialogs open with the first field focused and selected; Enter confirms | done | |
@@ -178,6 +178,8 @@ re-measure of the panels added since.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Pen, Anchor Point and Direct Selection drags: the preview gets every pointer position, including after the pointer re-enters the window and the move in the release's frame (#834); score unchanged (estimated) |
+| 2026-10-11 | minor | Units: a document saved as SVG reopens in its own units (#864); score unchanged (estimated) |
 | 2026-10-11 | minor | G1 modifier pass over the shortcut reference's selection and shape-editing rows: Alt swaps Direct and Group Selection (Cmd+Alt lends Group Selection), Shift-click a segment adds or subtracts it, Group Selection's Shift-click subtracts, Scissors Alt adds an anchor, Pencil Alt smooths (option), Knife Alt cuts straight (Shift: 45°); two rows found missing (E during a marquee, Space moving the zoom marquee); Modifier keys score 80% → 85% (estimated) |
 | 2026-10-11 | minor | A marquee inside a filled shape no longer selects it: only touching its path does (#1103); score unchanged (estimated) |
 | 2026-10-11 | minor | Live Corners: corners between curved sides round too, the curve trimmed to what the cut leaves (#1144); score unchanged (estimated) |

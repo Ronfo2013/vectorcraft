@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (G9: a 2026 `.ai` opens from its editing data — unknown operators skipped, unread object kinds left out with a loss note, every artboard compared with its page; layer structure under property tests; repeated per-page PDF layers merged; private data that can't be read is said, #951, #868, #779, #758) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (SVG keeps the document's units through save and open, #864; earlier: EPS page and stacked text strokes through the layers, #1102) · **Target:** Adobe Illustrator 2026 (30.x; G9: a 2026 `.ai` opens from its editing data — unknown operators skipped, unread object kinds left out with a loss note, every artboard compared with its page; layer structure under property tests; repeated per-page PDF layers merged; private data that can't be read is said, #951, #868, #779, #758) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every format Illustrator opens, places, saves or exports, against VectorCraft's format table (`FORMATS`,
 `OPEN_EXTS`, `PLACE_EXTS` in `crates/engine/src/cmd/fileio/mod.rs`). Illustrator's list comes from its public
@@ -84,7 +84,7 @@ the app's own editing copy of a file (an EPS after its `%%EOF`, a `.ai`'s `AIPri
 | PDF | open, place, save | yes (layers, masks, editable text, security) | yes (presets, PDF/X-1a/3/4, layers, marks and bleed, ICC, fast web view, 1.3+) | fuzzed import; PDF text placement issues in some files (#722) |
 | EPS | open, place, save | yes (own PostScript L3 interpreter, Illustrator EPS editing data structure) | yes (L2/L3, TIFF previews) | CID-keyed CJK type and CCITTFax images not read; #505 |
 | PostScript `.ps` | open | no | via Print to PostScript | |
-| SVG / SVGZ | open, place, save | yes | yes (SVG Options, Preserve Editing, symbols, filters, rich text) | strongest format; tests in `crates/svg/tests` |
+| SVG / SVGZ | open, place, save | yes | yes (SVG Options, Preserve Editing, symbols, filters, rich text) | strongest format; tests in `crates/svg/tests`. The document's units travel with the file (#864): the root `width`/`height` carry them (`width="210mm"`, [SVG 1.1 §7.10](https://www.w3.org/TR/SVG11/coords.html#Units)) over a `viewBox` in points, so mm/cm/in/pc/pt documents reopen in their units at the same size; pixels write unitless lengths (a user unit is a CSS px) and reopen as pixels; feet, yards and metres, which SVG has no unit for, reopen as inches or centimetres; `responsive` drops the size and so the units |
 | DXF | open, export | yes | yes (R12–2018) | |
 | DWG | open, export | no | no | no open spec; DXF instead |
 | EMF / WMF | open, export | yes | yes | |
@@ -108,6 +108,7 @@ the app's own editing copy of a file (an EPS after its `%%EOF`, a `.ai`'s `AIPri
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | SVG saves and exports write the root size in the document's units, so a document in mm/cm/in/pc/pt reopens in its units at the same artboard size (#864; it came back in pixels, reported as points) |
 | 2026-10-11 | minor | G9 on a real Illustrator 30.8 file: unknown operators skipped (not aborting), unread object kinds (gradient meshes) left out with a loss note, every artboard compared with its page; the file opens from its editing data |
 | 2026-10-11 | minor | G9 audit: layer/group/guide structure of the editing data under property tests; PDF layers repeated per page merged; unreadable private data named in the notes (#951, #868, #779, #758) |
 | 2026-10-11 | minor | An EPS keeps its own page and its stacked text strokes through its layers (#1102) |

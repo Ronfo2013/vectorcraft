@@ -71,7 +71,8 @@ fn foreign_masks_keep_their_art() {
 
 /// `svg` drawn by resvg, `w`×`h` on white.
 fn resvg_render(svg: &str, w: u32, h: u32) -> Image {
-    let tree = resvg::usvg::Tree::from_str(svg, &resvg::usvg::Options::default()).expect("parse");
+    // At 72 dpi: our root is sized in points (#864), and a point is a pixel here.
+    let tree = resvg::usvg::Tree::from_str(svg, &resvg::usvg::Options { dpi: 72.0, ..Default::default() }).expect("parse");
     let mut pm = resvg::tiny_skia::Pixmap::new(w, h).unwrap();
     pm.fill(resvg::tiny_skia::Color::WHITE);
     resvg::render(&tree, resvg::tiny_skia::Transform::identity(), &mut pm.as_mut());

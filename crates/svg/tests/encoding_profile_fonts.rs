@@ -100,7 +100,7 @@ fn latin1_files_write_other_characters_as_references() {
         assert_eq!(plain(&back), LINE, "{minify}");
         assert!(red_fill(&back));
         // usvg reads the entities (and their references) too.
-        let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).unwrap();
+        let tree = usvg::Tree::from_str(&svg, &usvg::Options { dpi: 72.0, ..Default::default() }).unwrap();
         assert!(tree.root().has_children());
         // The editing data's hash covers the file as written.
         assert!(editing(&svg).unwrap().intact, "{minify}");
@@ -111,7 +111,7 @@ fn latin1_files_write_other_characters_as_references() {
 fn style_entities_parse_in_usvg() {
     let o = export_full(&doc(), &ExportOptions { styling: Styling::StyleEntities, ..Default::default() }, None);
     assert!(o.svg.contains("<!ENTITY st1 ") && o.svg.contains("style=\"&st1;\""), "{}", o.svg);
-    let tree = usvg::Tree::from_str(&o.svg, &usvg::Options::default()).unwrap();
+    let tree = usvg::Tree::from_str(&o.svg, &usvg::Options { dpi: 72.0, ..Default::default() }).unwrap();
     let mut red = false;
     fn walk(g: &usvg::Group, red: &mut bool) {
         for n in g.children() {
