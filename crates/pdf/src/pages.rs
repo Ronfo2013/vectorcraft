@@ -160,12 +160,24 @@ pub fn illustrator_data_checked(bytes: &[u8], password: Option<&str>) -> Option<
         }
     }
     // Every stream must be read, in order: one the numbering skips would leave a hole in the data.
-    let keys = private.keys().filter(|k| k.starts_with(b"AIPrivateData")).count();
+    // Only keys numbered as the streams are count (`AIPrivateData12`, not `AIPrivateData01` or
+    // `AIPrivateDataFoo`, which are other keys).
+    let keys = private.keys().filter(|k| stream_number(k.as_ref()).is_some()).count();
     if keys > streams as usize {
         return Some(Err(format!("its private data streams aren't numbered 1 to {keys}: stream {} is missing", streams + 1)));
     }
     // Empty streams are no data.
     (!data.is_empty()).then_some(Ok(data))
+}
+
+/// The number of a private data stream's key, `AIPrivateData<N>` (N decimal, from 1, without
+/// leading zeros); `None` for any other key.
+fn stream_number(key: &[u8]) -> Option<u32> {
+    let digits = std::str::from_utf8(key.strip_prefix(b"AIPrivateData")?).ok()?;
+    if digits.is_empty() || digits.len() > 9 || !digits.bytes().all(|b| b.is_ascii_digit()) || digits.starts_with('0') {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 /// `stream` decoded, up to `most` bytes: the decoder is run here rather than by the PDF reader's

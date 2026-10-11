@@ -44,6 +44,9 @@ const ART_LEFT_OUT: &str = "hidden layers have art this can't read";
 /// The start of the note given when a file's layers come from its page or PDF part instead of
 /// its editing data; the reason follows ([`layers_unread_note`]).
 pub const LAYERS_UNREAD: &str = "the file's layers weren't read";
+/// The start of the note for artboards that weren't compared with their pages while the reader
+/// skipped operators or left objects out: what is on them can't be shown to be whole (a loss).
+pub const UNCOMPARED: &str = "artboards that weren't compared with their pages";
 /// The note for a `.ai` whose editing data has no layers at all: its PDF part is all its art, so
 /// nothing is lost ([`is_loss`] doesn't match it).
 pub const NO_LAYERS_NOTE: &str = "the file's editing data has no layers: they come from its PDF part";
@@ -59,9 +62,17 @@ pub fn layers_unread_note(why: &str) -> String {
 pub fn is_loss(note: &str) -> bool {
     note.ends_with(TEXT_LEFT_OUT)
         || note.ends_with(TYPE_LEFT_OUT)
-        || [ART_LEFT_OUT, LAYERS_UNREAD, ai::OBJECTS_LEFT_OUT, super::graphics::TOO_MUCH, super::graphics::FAR_AWAY]
-            .iter()
-            .any(|n| note.starts_with(n))
+        || [
+            ART_LEFT_OUT,
+            LAYERS_UNREAD,
+            ai::OBJECTS_LEFT_OUT,
+            ai::OPERATORS_SKIPPED_UNCHECKED,
+            UNCOMPARED,
+            super::graphics::TOO_MUCH,
+            super::graphics::FAR_AWAY,
+        ]
+        .iter()
+        .any(|n| note.starts_with(n))
 }
 
 /// Most text objects in the layers, and most pieces of type in one place on the page, that are matched
@@ -671,6 +682,8 @@ struct PageView {
     /// Where the page's own type is, in its pixels.
     page_type: Vec<Rect>,
     layers: vectorcraft_render::Renderer,
+    /// Draws the page's other regions (its other artboards), keeping its images decoded.
+    page_renderer: vectorcraft_render::Renderer,
     scale: f64,
 }
 
@@ -680,10 +693,33 @@ impl PageView {
         let scale = compare_scale(ra);
         // Drawn on nothing and then seen on white: blending modes have no page to blend with, as in
         // the app that wrote the file.
-        let page = vectorcraft_render::Renderer::new().render_region(frame.page, ra, scale, false);
+        let mut page_renderer = vectorcraft_render::Renderer::new();
+        let page = page_renderer.render_region(frame.page, ra, scale, false);
         let mut page_type = vec![];
         type_areas(&frame.page.layers, ra, scale, &mut page_type);
-        Self { page, page_type, layers: vectorcraft_render::Renderer::new(), scale }
+        Self { page, page_type, layers: vectorcraft_render::Renderer::new(), page_renderer, scale }
+    }
+
+    /// [`Self::difference`] for `printed`, the layers' document already without what doesn't
+    /// print ([`as_printed`]).
+    fn difference_of_printed(&mut self, printed: &Document, rb: Rect) -> Difference {
+        let y = self.layers.render_region(printed, rb, self.scale, false);
+        let mut areas = self.page_type.clone();
+        type_areas(&printed.layers, rb, self.scale, &mut areas);
+        compared(&self.page, &y, &areas)
+    }
+
+    /// How `printed` (the layers' document without what doesn't print) on `rb` draws differently
+    /// from the page `page` on `ra` (rectangles of the same size), for a region other than the
+    /// page's own: with the renderers kept here, so images stay decoded across regions.
+    fn region_difference(&mut self, page: &Document, ra: Rect, printed: &Document, rb: Rect) -> Difference {
+        let scale = compare_scale(ra);
+        let x = self.page_renderer.render_region(page, ra, scale, false);
+        let y = self.layers.render_region(printed, rb, scale, false);
+        let mut areas = vec![];
+        type_areas(&page.layers, ra, scale, &mut areas);
+        type_areas(&printed.layers, rb, scale, &mut areas);
+        compared(&x, &y, &areas)
     }
 
     /// How `b` on `rb` (a rectangle the page's size) draws differently from the page ([`compared`]).
@@ -710,21 +746,6 @@ impl PageView {
         let differing = self.page.pixels.as_chunks::<4>().0.iter().zip(y.pixels.as_chunks::<4>().0).filter(|(p, q)| differ_in_colour(p, q)).count();
         differing as f64 / (f64::from(y.width) * f64::from(y.height)).max(1.0)
     }
-}
-
-/// How `a` on `ra` and `b` on `rb` (rectangles of the same size) draw differently ([`compared`]),
-/// for a region other than the page's ([`PageView`] draws that one once).
-fn difference(a: &Document, ra: Rect, b: &Document, rb: Rect) -> Difference {
-    let printed = as_printed(b);
-    let b = printed.as_ref().unwrap_or(b);
-    let scale = compare_scale(ra);
-    // A renderer each: the two documents' images can share their keys and not their pixels.
-    let x = vectorcraft_render::Renderer::new().render_region(a, ra, scale, false);
-    let y = vectorcraft_render::Renderer::new().render_region(b, rb, scale, false);
-    let mut areas = vec![];
-    type_areas(&a.layers, ra, scale, &mut areas);
-    type_areas(&b.layers, rb, scale, &mut areas);
-    compared(&x, &y, &areas)
 }
 
 /// How two drawings of the same size differ, each drawn on nothing and seen on white, away from
@@ -832,7 +853,7 @@ struct Frame<'a> {
 /// nothing is compared. `outlined`: the page's type was read as outlines, so it has none to put in
 /// the text objects.
 fn build(data: &[u8], visible: Option<&Document>, page: Page, outlined: bool) -> Result<(Document, Vec<String>), String> {
-    let Structure { mut doc, to_doc, bbox, artboard, template, hidden_unread, slot_names, warnings } = ai::read(data)?;
+    let Structure { mut doc, to_doc, bbox, artboard, template, hidden_unread, skipped, slot_names, warnings } = ai::read(data)?;
     let (mut shown, mut hidden) = (vec![], vec![]);
     let mut frame = None;
     if let Some(visible) = visible {
@@ -918,6 +939,10 @@ fn build(data: &[u8], visible: Option<&Document>, page: Page, outlined: bool) ->
     if !hidden_unread.is_empty() {
         notes.push(format!("{ART_LEFT_OUT} ({}), left out of them", few(hidden_unread)));
     }
+    // Operators skipped and objects left out: the page comparison can show the art round them is
+    // whole only where it reaches (the compared artboards, or an EPS's page of all its art).
+    let unread = !skipped.is_empty() || notes.iter().any(|n| n.starts_with(ai::OBJECTS_LEFT_OUT));
+    let ops = || skipped.iter().map(|o| format!("`{o}`")).collect::<Vec<_>>().join(", ");
     match frame {
         Some(frame) => {
             let mut view = PageView::new(&frame);
@@ -925,11 +950,43 @@ fn build(data: &[u8], visible: Option<&Document>, page: Page, outlined: bool) ->
             if unseen > 0 {
                 notes.push(format!("{unseen} {UNSEEN_TEXT}"));
             }
-            notes.extend(compare(&frame, &mut view, &doc)?);
+            let compared = compare(&frame, &mut view, &doc)?;
+            notes.extend(compared.note);
+            if unread && !compared.uncompared.is_empty() {
+                let list: Vec<String> = compared.uncompared.iter().map(|i| i.to_string()).collect();
+                notes.push(format!(
+                    "{UNCOMPARED} ({}; another size than their page, or past the {MAX_COMPARED_PAGES} compared after the first) while the editing data had operators skipped or objects left out: what is on them may differ from the file",
+                    list.join(", ")
+                ));
+            }
+            if !skipped.is_empty() {
+                let covered = compared.uncompared.is_empty() && !art_outside(&doc, &compared.rects);
+                notes.push(if covered {
+                    format!("{} ({}): what they set isn't read", ai::OPERATORS_SKIPPED, ops())
+                } else {
+                    format!("{} ({}): what they set may be art the document lacks", ai::OPERATORS_SKIPPED_UNCHECKED, ops())
+                });
+            }
         }
-        None => unmark(&mut doc.layers, true, &mut vec![]),
+        None => {
+            unmark(&mut doc.layers, true, &mut vec![]);
+            if !skipped.is_empty() {
+                notes.push(format!("{} ({}): there is no page to check against", ai::OPERATORS_SKIPPED_UNCHECKED, ops()));
+            }
+        }
     }
     Ok((doc, notes))
+}
+
+/// Does `doc` have art that shows outside every one of `rects` (the compared artboards)?
+fn art_outside(doc: &Document, rects: &[Rect]) -> bool {
+    fn outside(nodes: &[Arc<Node>], rects: &[Rect]) -> bool {
+        nodes.iter().filter(|n| n.visible).any(|n| match &n.kind {
+            NodeKind::Layer { children, .. } => outside(children, rects),
+            _ => n.visual_bounds().is_some_and(|b| !rects.iter().any(|r| !r.intersect(b).is_zero_area())),
+        })
+    }
+    outside(&doc.layers, rects)
 }
 
 /// Marks (in a node's name, until [`prune_unseen`] has looked) the text objects made from the file's
@@ -1022,19 +1079,37 @@ const PAST_THE_PAGE: f64 = 1.0;
 /// How many artboards after the first are compared with their pages (each is a drawing of both).
 const MAX_COMPARED_PAGES: usize = 32;
 
+/// What [`compare`] found when the layers' art looks like the page's.
+struct Compared {
+    /// The note to give when they differ a little.
+    note: Option<String>,
+    /// The artboards (1-based) that weren't compared with their pages: another size than their
+    /// page, no page of theirs, or past [`MAX_COMPARED_PAGES`] after the first.
+    uncompared: Vec<usize>,
+    /// Where the comparison reached, in the layers' document (an EPS's page of all its art: the
+    /// whole art).
+    rects: Vec<Rect>,
+}
+
 /// Do the layers' art and the page's own look alike (where the page holds all the art that prints,
-/// also round it)? An error says they don't; `Ok` has the note to give when they differ a little.
-fn compare(frame: &Frame<'_>, view: &mut PageView, layered: &Document) -> Result<Option<String>, String> {
-    let mut diff = view.difference(layered, frame.rect);
+/// also round it)? An error says they don't; `Ok` has the note to give when they differ a little,
+/// and which artboards weren't compared.
+fn compare(frame: &Frame<'_>, view: &mut PageView, layered: &Document) -> Result<Compared, String> {
+    // The page doesn't print what isn't printed: one copy for every region compared.
+    let printed_copy = as_printed(layered);
+    let printed = printed_copy.as_ref().unwrap_or(layered);
+    let mut diff = view.difference_of_printed(printed, frame.rect);
+    let mut rects = vec![frame.rect];
     if frame.whole
-        && let Some(art) = vectorcraft_render::encode::art_bounds(as_printed(layered).as_ref().unwrap_or(layered))
-            .filter(|a| !frame.rect.inflate(PAST_THE_PAGE, PAST_THE_PAGE).contains_rect(*a))
+        && let Some(art) =
+            vectorcraft_render::encode::art_bounds(printed).filter(|a| !frame.rect.inflate(PAST_THE_PAGE, PAST_THE_PAGE).contains_rect(*a))
     {
         // The page and the art the layers print beyond it, each in its own document's place.
         let all = frame.rect.union(art);
         let (dx, dy) = (frame.page_rect.x0 - frame.rect.x0, frame.page_rect.y0 - frame.rect.y0);
-        let round = difference(frame.page, Rect::new(all.x0 + dx, all.y0 + dy, all.x1 + dx, all.y1 + dy), layered, all);
+        let round = view.region_difference(frame.page, Rect::new(all.x0 + dx, all.y0 + dy, all.x1 + dx, all.y1 + dy), printed, all);
         diff = Difference { any: diff.any.max(round.any), solid: diff.solid.max(round.solid) };
+        rects = vec![all];
     }
     if diff.any > MAX_DIFFERENCE || diff.solid > MAX_SOLID_DIFFERENCE {
         return Err(format!("the art on them differs from the page's in {:.1}% of it", diff.any * 100.0));
@@ -1042,23 +1117,31 @@ fn compare(frame: &Frame<'_>, view: &mut PageView, layered: &Document) -> Result
     // The other artboards of a `.ai`, each against its page (the PDF part has one per artboard,
     // of the same size, in the same order): an object the layers lack on any of them (one of a
     // kind the reader leaves out, say) counts as much as on the first (#951: a file of four
-    // artboards whose gradient meshes are all on the second).
-    for (i, (a, p)) in layered.artboards.iter().zip(&frame.page.artboards).enumerate().skip(1).take(MAX_COMPARED_PAGES) {
+    // artboards whose gradient meshes are all on the second). An EPS's page is its whole art.
+    let mut uncompared = vec![];
+    for (i, a) in layered.artboards.iter().enumerate().skip(1).filter(|_| !frame.whole) {
+        let Some(p) = frame.page.artboards.get(i).filter(|_| i <= MAX_COMPARED_PAGES) else {
+            uncompared.push(i + 1);
+            continue;
+        };
         if (a.rect.width() - p.rect.width()).abs() > 0.5 || (a.rect.height() - p.rect.height()).abs() > 0.5 {
+            uncompared.push(i + 1);
             continue;
         }
-        let d = difference(frame.page, p.rect, layered, a.rect);
+        let d = view.region_difference(frame.page, p.rect, printed, a.rect);
         if d.any > MAX_DIFFERENCE || d.solid > MAX_SOLID_DIFFERENCE {
             return Err(format!("the art on them differs from the page's in {:.1}% of artboard {}", d.any * 100.0, i + 1));
         }
         diff = Difference { any: diff.any.max(d.any), solid: diff.solid.max(d.solid) };
+        rects.push(a.rect);
     }
-    Ok((diff.any > NOTABLE_DIFFERENCE).then(|| {
+    let note = (diff.any > NOTABLE_DIFFERENCE).then(|| {
         format!(
             "the art on the layers differs from the file's own page in about {:.1}% of it (brush strokes, live effects and the like that the layers' data doesn't describe)",
             diff.any * 100.0
         )
-    }))
+    });
+    Ok(Compared { note, uncompared, rects })
 }
 
 /// The EPS `visible` (read as its page) read through its editing copy instead (its private data, or
@@ -1092,15 +1175,19 @@ pub(super) fn layered(ps: &[u8], visible: Imported) -> Imported {
 /// `warnings` are the notes of reading the PDF part; the notes returned are those, and the layers'.
 /// `outlined`: the PDF part's type was read as outlines (a file whose type shows then comes in as
 /// its PDF part).
-pub fn layered_ai(private: &[u8], visible: Document, warnings: Vec<String>, outlined: bool) -> (Document, Vec<String>) {
+pub fn layered_ai(private: &[u8], visible: Document, warnings: Vec<String>, outlined: bool) -> (Document, Vec<String>, bool) {
     // Whatever stops the layers being read is said (#951, #868: files opened as their PDF part
     // with no note saying why).
     let (data, result) = match ai::decode_private(private) {
-        // Data without layers has no art the PDF part lacks: a note, not a loss.
+        // Editing data without layers has no art the PDF part lacks: a note, not a loss. Data
+        // that isn't editing data this reads (damaged, or another app's) may hold anything.
         Ok(data) if !has_layers(&data) => {
-            let mut all = warnings;
-            all.push(NO_LAYERS_NOTE.to_string());
-            return (visible, all);
+            if is_editing_data(&data) {
+                let mut all = warnings;
+                all.push(NO_LAYERS_NOTE.to_string());
+                return (visible, all, false);
+            }
+            (Some(data), Err("it isn't Illustrator editing data VectorCraft reads".to_string()))
         }
         Ok(data) => {
             let r = build(&data, Some(&visible), Page::Artboard, outlined);
@@ -1112,7 +1199,7 @@ pub fn layered_ai(private: &[u8], visible: Document, warnings: Vec<String>, outl
         Ok((done, notes)) => {
             let mut all = warnings;
             all.extend(notes.into_iter().filter(|n| !all.contains(n)).collect::<Vec<_>>());
-            (done, all)
+            (done, all, true)
         }
         Err(why) => {
             let mut all = warnings;
@@ -1121,9 +1208,18 @@ pub fn layered_ai(private: &[u8], visible: Document, warnings: Vec<String>, outl
             if let Some(data) = data {
                 place_pages(&ai::artboards(&data), &mut visible);
             }
-            (visible, all)
+            (visible, all, false)
         }
     }
+}
+
+/// Does `data` start like the editing data this reads (a PostScript header, or the app's version
+/// comments)?
+fn is_editing_data(data: &[u8]) -> bool {
+    let head = data.get(..data.len().min(4096)).unwrap_or_default();
+    [&b"%!PS-Adobe"[..], b"%%AI8_CreatorVersion", b"%AI5_FileFormat", b"%%Creator: Adobe Illustrator"]
+        .iter()
+        .any(|m| super::lex::find(head, m).is_some())
 }
 
 /// The pages of `doc` (a `.ai` read as its PDF part: a page per artboard, in a row) moved, with

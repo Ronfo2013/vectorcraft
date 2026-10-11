@@ -106,6 +106,7 @@ fn layers_written_again_for_each_page_are_the_same_layers() {
     let catalog = format!("/OCProperties << /OCGs [{0}] /D << /Order [{0}] >> >> ", refs.join(" "));
     let page = |a: usize, b: usize| PdfPage {
         resources: format!("/Properties << /MC0 {} 0 R /MC1 {} 0 R >>", first + a, first + b),
+        entries: AI_PAGE.into(),
         ..PdfPage::new(100.0, 100.0, "/OC /MC0 BDC 1 0 0 rg 10 10 30 30 re f EMC /OC /MC1 BDC 0 0 1 rg 50 50 30 30 re f EMC")
     };
     let extra: Vec<&str> = objs.iter().map(String::as_str).collect();
@@ -120,6 +121,7 @@ fn layers_written_again_for_each_page_are_the_same_layers() {
     let catalog = format!("/OCProperties << /OCGs [{0} 0 R {1} 0 R] /D << /Order [{0} 0 R {1} 0 R] >> >> ", first, first + 1);
     let one = |g: usize| PdfPage {
         resources: format!("/Properties << /MC0 {} 0 R >>", first + g),
+        entries: AI_PAGE.into(),
         ..PdfPage::new(100.0, 100.0, "/OC /MC0 BDC 1 0 0 rg 10 10 30 30 re f EMC")
     };
     let d = import(&pdf_with_catalog(&[one(0), one(1)], &[&objs[0], &objs[1]], &catalog, None)).unwrap();
@@ -141,13 +143,33 @@ fn layered_file(pages: &[PdfPage], objs: &[String], order: &str) -> Vec<u8> {
     pdf_with_catalog(pages, &extra, &catalog, None)
 }
 
-/// A page marking `rgb` in group object `g` of a file of `pages` pages (`g` an index into the
-/// extra objects).
+/// The page entry that marks a page as a PDF-compatible `.ai`'s (an editor's private data).
+const AI_PAGE: &str = "/PieceInfo << /Illustrator << /Private << /AIPrivateData1 0 >> >> >>";
+
+/// A page of a `.ai` marking `rgb` in group object `g` of a file of `pages` pages (`g` an index
+/// into the extra objects).
 fn marking(pages: usize, g: usize, rgb: &str) -> PdfPage {
     PdfPage {
         resources: format!("/Properties << /MC0 {} 0 R >>", first_extra(pages) + g),
+        entries: AI_PAGE.into(),
         ..PdfPage::new(100.0, 100.0, &format!("/OC /MC0 BDC {rgb} rg 10 10 30 30 re f EMC"))
     }
+}
+
+/// A plain PDF's layers are each their own: two pages with groups of one name, as a combined PDF
+/// of unrelated files has, stay two layers each. Only a `.ai` writes its layers again per page.
+#[test]
+fn a_plain_pdfs_same_named_groups_on_different_pages_stay_apart() {
+    let group = |name: &str| format!("<< /Type /OCG /Name ({name}) >>");
+    let objs = ["Layer 1", "Layer 1"].map(group).to_vec();
+    let plain = |g: usize, rgb: &str| PdfPage { entries: String::new(), ..marking(2, g, rgb) };
+    let d = import(&layered_file(&[plain(0, "1 0 0"), plain(1, "0 0 1")], &objs, "{0} {1}")).unwrap();
+    assert_eq!(names(&d), ["Layer 1", "Layer 1"]);
+    assert_eq!(colors(&d.layers[0]), [Color::rgb(1.0, 0.0, 0.0)]);
+    assert_eq!(colors(&d.layers[1]), [Color::rgb(0.0, 0.0, 1.0)]);
+    // The same pages as a `.ai`'s: one layer.
+    let d = import(&layered_file(&[marking(2, 0, "1 0 0"), marking(2, 1, "0 0 1")], &objs, "{0} {1}")).unwrap();
+    assert_eq!(names(&d), ["Layer 1"]);
 }
 
 /// A layer whose art lies in its sublayers alone marks no content itself: written again for a
@@ -175,6 +197,7 @@ fn a_repeated_layer_listed_before_the_first_pages_is_merged_too() {
     // Page 1 uses objects 2 and 3, page 2 objects 0 and 1.
     let page = |a: usize, b: usize| PdfPage {
         resources: format!("/Properties << /MC0 {} 0 R /MC1 {} 0 R >>", first_extra(2) + a, first_extra(2) + b),
+        entries: AI_PAGE.into(),
         ..PdfPage::new(100.0, 100.0, "/OC /MC0 BDC 1 0 0 rg 10 10 30 30 re f EMC /OC /MC1 BDC 0 0 1 rg 50 50 30 30 re f EMC")
     };
     let d = import(&layered_file(&[page(2, 3), page(0, 1)], &objs, "{0} {1} {2} {3}")).unwrap();
@@ -192,6 +215,7 @@ fn of_two_new_groups_of_a_name_the_first_painted_takes_the_layer() {
     // Page 1: object 0, red. Page 2 paints object 2 (blue) before object 1 (green).
     let second = PdfPage {
         resources: format!("/Properties << /MC2 {} 0 R /MC1 {} 0 R >>", first_extra(2) + 2, first_extra(2) + 1),
+        entries: AI_PAGE.into(),
         ..PdfPage::new(100.0, 100.0, "/OC /MC2 BDC 0 0 1 rg 10 10 30 30 re f EMC /OC /MC1 BDC 0 1 0 rg 50 50 30 30 re f EMC")
     };
     let d = import(&layered_file(&[marking(2, 0, "1 0 0"), second], &objs, "{0} {1} {2}")).unwrap();
@@ -542,6 +566,16 @@ fn private_data_streams_the_numbering_skips_are_an_error_that_names_them() {
     let lost = pdf_with_catalog(&[page("/PieceInfo << /Illustrator << /Private << /AIPrivateData1 99 0 R >> >> >>".into())], &[&one, &two], "", None);
     let why = illustrator_data_checked(&lost, None).unwrap().unwrap_err();
     assert!(why.contains("stream 1"), "{why}");
+    // Other keys with the prefix (`AIPrivateDataFoo`, `AIPrivateData01`) aren't streams: ignored.
+    let extra = pdf_with_catalog(
+        &[page(format!(
+            "/PieceInfo << /Illustrator << /Private << /AIPrivateData1 {a} 0 R /AIPrivateData2 {b} 0 R /AIPrivateDataFoo 7 /AIPrivateData01 8 /NumBlock 2 >> >> >>"
+        ))],
+        &[&one, &two],
+        "",
+        None,
+    );
+    assert_eq!(illustrator_data_checked(&extra, None).unwrap().unwrap(), b"first third");
     // Empty streams are no data, not an error.
     let empty = stream("", "");
     let bare =

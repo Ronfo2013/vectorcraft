@@ -291,12 +291,17 @@ fn unknown_state_operators_are_skipped_with_a_note() {
     assert!(data.contains("X^"), "{data}");
     let s = read(data.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
     check(&s.doc, &layers);
-    let note = s.warnings.iter().find(|w| w.starts_with(super::read::OPERATORS_SKIPPED)).unwrap_or_else(|| panic!("{:?}", s.warnings));
-    assert!(note.contains("`X^`") && note.contains("`Xz`") && note.contains("`X#`"), "{note}");
-    assert!(!crate::is_loss(note), "state that isn't read loses no art");
+    assert_eq!(s.skipped.iter().cloned().collect::<Vec<_>>(), ["X#", "X^", "Xz"]);
+    assert!(s.warnings.is_empty(), "the importer says whether the page comparison covers them: {:?}", s.warnings);
+    // Without a page to compare with, what they set may be art the document lacks: a loss.
     let (doc, notes) = crate::ai_alone(data.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
     check(&doc, &layers);
     assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].starts_with(super::read::OPERATORS_SKIPPED_UNCHECKED) && notes[0].contains("`X^`") && crate::is_loss(&notes[0]), "{notes:?}");
+    // On a layer that doesn't show, that layer's art counts as unread (a loss), as before.
+    let hidden = written(&[Layer { visible: false, ..layers[0].clone() }]).replace("U\n%_/ArtDictionary", "/Fancy X^\nU\n%_/ArtDictionary");
+    let s = read(hidden.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
+    assert!(s.skipped.is_empty() && s.hidden_unread.contains("`X^`"), "{:?} {:?}", s.skipped, s.hidden_unread);
     // While a path is being built.
     let open = written(&layers).replace(" m\n", " m\n/Fancy X^\n");
     assert!(read(open.as_bytes()).unwrap_err().contains("`X^`"));
@@ -329,10 +334,25 @@ fn objects_of_kinds_it_doesnt_read_are_left_out_with_a_loss_note() {
     assert!(note.ends_with("(Mesh: 1)"), "{note}");
     assert!(crate::is_loss(note));
     assert!(!s.warnings.iter().any(|w| w.starts_with(super::read::OPERATORS_SKIPPED)), "{:?}", s.warnings);
-    // Two of them, one on a hidden layer: both counted.
+    // Two of them: both counted.
     let twice = data.replacen("/End X!\n", "/End X!\n/Mesh X!\n%_[1] /P X#\n/End X!\n", 1);
     let s = read(twice.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
     assert!(s.warnings.iter().any(|w| w.ends_with("(Mesh: 2)")), "{:?}", s.warnings);
+    // An object inside the object is its data: its end doesn't end the outer one, whose data
+    // after it (bare arrays, a `/Document` dictionary) stays nothing: the artboards are the crop
+    // marks', the second path is still read, one object counted.
+    let nested = data.replacen(
+        "%_/E X#\n",
+        "%_/Inner X!\n%_[1 2] /P X#\n%_/End X!\n%_[1 2 3 4 5 6 1]\n%_[1 2 3 4 5 6 1]\n\
+         %_/Document :\n%_/Dictionary :\n%_/Array :\n%_/Dictionary :\n%_0 50 /RealPointRelToROrigin\n%_ (PositionPoint1) ,\n\
+         %_50 0 /RealPointRelToROrigin\n%_ (PositionPoint2) ,\n%_; ,\n%_; (ArtboardArray) ,\n%_;\n%_/E X#\n",
+        1,
+    );
+    let s = read(nested.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
+    check(&s.doc, &layers);
+    assert!(s.warnings.iter().any(|w| w.ends_with("(Mesh: 1)")), "{:?}", s.warnings);
+    assert_eq!(s.doc.artboards.len(), 1);
+    assert_eq!(s.doc.artboards[0].rect, kurbo::Rect::new(0.0, 0.0, 200.0, 100.0), "the crop marks, not the dictionary in the object");
     // One that doesn't end swallows the layer's end: damaged.
     let e = read(data.replacen("/End X!\n", "", 1).as_bytes()).unwrap_err();
     assert!(e.contains("Mesh") || e.contains("inside a layer"), "{e}");

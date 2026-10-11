@@ -256,9 +256,21 @@ fn a_file_whose_private_data_cant_be_read_says_why() {
     let w = r["warnings"].to_string();
     assert!(w.contains("weren't read from its editing data") && w.contains("private data stream 1"), "{r}");
     assert_eq!(names(&s.doc().unwrap().doc.layers), ["Page 1"]);
-    // Data without layers.
+    // Editing data without layers: a note, and the PDF part's own note stays (the art outside the
+    // artboards is still only in the private data, which supplied nothing).
     let r = open(&mut s, "bare.ai", &ai::ai(&compressed(b"%!PS-Adobe-3.0\n%%EOF\n"), page), json!({})).unwrap();
-    assert!(r["warnings"].as_array().unwrap().contains(&json!(vectorcraft_eps::NO_LAYERS_NOTE)), "{r}");
+    let w = r["warnings"].as_array().unwrap();
+    assert!(w.contains(&json!(vectorcraft_eps::NO_LAYERS_NOTE)) && w.contains(&json!(vectorcraft_pdf::OFF_ARTBOARD_NOTE)), "{r}");
+    // Data that isn't editing data: the layers weren't read (a loss), with the PDF part's note.
+    let r = open(&mut s, "odd.ai", &ai::ai(&compressed(b"nothing of the kind"), page), json!({})).unwrap();
+    let w = r["warnings"].to_string();
+    assert!(
+        w.contains("weren't read from its editing data") && w.contains("isn't Illustrator editing data") && w.contains("outside its artboards"),
+        "{r}"
+    );
+    // When the layers came from the editing data, the PDF part's note goes.
+    let r = open(&mut s, "nested.ai", &ai::ai(&compressed(&data), page), json!({})).unwrap();
+    assert!(!r["warnings"].to_string().contains("outside its artboards"), "{r}");
     // Saved without its PDF part: the reason is the error.
     let e = open(&mut s, "broken.ai", &missing(ai::ai(&compressed(&data), PLACEHOLDER)), json!({})).unwrap_err().to_string();
     assert!(e.contains("private data stream 1"), "{e}");

@@ -153,12 +153,12 @@ fn through_editing_data(bytes: &[u8], opts: &LoadOptions, doc: Document, mut war
         None => return (doc, warnings),
     };
     let outlined = opts.text_as == vectorcraft_pdf::TextAs::Outlines;
-    let (doc, mut warnings) = vectorcraft_eps::layered_ai(&private, doc, warnings, outlined);
-    // The note that the art outside the artboard is lost is the reason the layers weren't read.
-    if warnings.iter().any(|w| w.starts_with(vectorcraft_eps::LAYERS_UNREAD)) {
-        return (doc, warnings);
+    let (doc, mut warnings, used) = vectorcraft_eps::layered_ai(&private, doc, warnings, outlined);
+    // The editing data has the art outside the artboards: the note that it is lost goes only
+    // when the layers came from it.
+    if used {
+        warnings.retain(|w| w != vectorcraft_pdf::OFF_ARTBOARD_NOTE);
     }
-    warnings.retain(|w| w != vectorcraft_pdf::OFF_ARTBOARD_NOTE);
     (doc, warnings)
 }
 

@@ -155,11 +155,25 @@ fn what_the_layers_cant_say_keeps_the_page_when_it_shows_and_not_when_it_doesnt(
     let r = import(&eps(&page_square(10, 10), &hidden)).unwrap();
     assert_eq!(names(&r.document), ["Art", "Old"]);
     assert!(r.warnings.iter().any(|w| w.contains("hidden layers have art this can't read")), "{:?}", r.warnings);
-    // Between objects it is state this doesn't model: skipped, the layers used, a note (no loss).
+    // Between objects it is state this doesn't model: skipped, the layers used, a note (no loss:
+    // the page comparison covers the art round it).
     let state = native(&layer("Art", true, &format!("{}\n0 0 0 1 0 0 Zq", square(10, 10))));
     let r = import(&eps(&page_square(10, 10), &state)).unwrap();
     assert_eq!(names(&r.document), ["Art"], "{:?}", r.warnings);
-    assert!(r.warnings.iter().any(|w| w.contains("skipped") && w.contains("`Zq`") && !crate::is_loss(w)), "{:?}", r.warnings);
+    assert!(
+        r.warnings.iter().any(|w| w.starts_with(crate::import::ai::OPERATORS_SKIPPED) && w.contains("`Zq`") && !crate::is_loss(w)),
+        "{:?}",
+        r.warnings
+    );
+    // On a hidden layer nothing checks it: that layer's art counts as unread (a loss), as before.
+    let hidden_state = native(&(layer("Art", true, &square(10, 10)) + &layer("Old", false, "0 0 0 1 0 0 Zq")));
+    let r = import(&eps(&page_square(10, 10), &hidden_state)).unwrap();
+    assert_eq!(names(&r.document), ["Art", "Old"]);
+    assert!(
+        r.warnings.iter().any(|w| w.contains("hidden layers have art this can't read") && w.contains("`Zq`") && crate::is_loss(w)),
+        "{:?}",
+        r.warnings
+    );
 }
 
 #[test]
@@ -221,7 +235,7 @@ fn pdf_part(x: f64, y: f64) -> Document {
 fn an_ai_file_gets_its_layers_and_the_art_outside_its_artboard() {
     // A square on the artboard, and one above it (the artboard is y 0 to 100 here).
     let art = native(&(layer("Jig", true, &square(10, 10)) + &layer("Parts", true, &square(30, 110)) + &layer("Old", false, &square(60, 60))));
-    let (d, warnings) = crate::layered_ai(&private(&art), pdf_part(10.0, 86.0), vec!["a note".into()], false);
+    let (d, warnings, _) = crate::layered_ai(&private(&art), pdf_part(10.0, 86.0), vec!["a note".into()], false);
     assert_eq!(names(&d), ["Jig", "Parts", "Old"], "{warnings:?}");
     assert_eq!(warnings, ["a note"], "nothing else to say");
     let above = d.layers[1].children().unwrap()[0].visual_bounds().unwrap();
@@ -232,18 +246,26 @@ fn an_ai_file_gets_its_layers_and_the_art_outside_its_artboard() {
 #[test]
 fn an_ai_file_that_cant_be_read_through_its_editing_data_keeps_its_pdf_part() {
     let pdf = pdf_part(10.0, 86.0);
-    // No editing data this reads: the PDF part, and a note saying why (#951, #868 reported files
-    // that came in as their PDF part with no reason given).
-    let (d, w) = crate::layered_ai(b"nothing", pdf.clone(), vec![], false);
+    // Data that isn't editing data this reads: the PDF part, and a note saying why, a loss (what
+    // the data holds is unknown; #951, #868 reported files that came in as their PDF part with no
+    // reason given).
+    let (d, w, used) = crate::layered_ai(b"nothing", pdf.clone(), vec![], false);
     assert_eq!(d.layers.len(), pdf.layers.len());
+    assert!(
+        !used && w.len() == 1 && w[0].starts_with(crate::LAYERS_UNREAD) && w[0].contains("isn't Illustrator editing data") && crate::is_loss(&w[0]),
+        "{w:?}"
+    );
+    // Editing data (its header) without layers: its PDF part is all its art, nothing is lost.
+    let (_, w, used) = crate::layered_ai(b"%!PS-Adobe-3.0\n%%Creator: Adobe Illustrator(R) 30.0\n%%EOF\n", pdf.clone(), vec![], false);
+    assert!(!used);
     assert_eq!(w, [crate::NO_LAYERS_NOTE]);
     assert!(!crate::is_loss(crate::NO_LAYERS_NOTE), "nothing of the file is lost: its PDF part is all its art");
     // Data that can't be decoded is a loss (what it holds is unknown).
-    let (_, w) = crate::layered_ai(b"%AI12_CompressedData not zlib", pdf.clone(), vec![], false);
+    let (_, w, _) = crate::layered_ai(b"%AI12_CompressedData not zlib", pdf.clone(), vec![], false);
     assert!(w.iter().any(|w| crate::is_loss(w) && w.contains("zlib")), "{w:?}");
     // Editing data that isn't for this page.
     let other = native(&layer("Jig", true, &square(10, 10))).replace("%AI3_Cropmarks: 0 0 100 100", "%AI3_Cropmarks: 0 0 50 50");
-    let (d, w) = crate::layered_ai(&private(&other), pdf.clone(), vec![], false);
+    let (d, w, _) = crate::layered_ai(&private(&other), pdf.clone(), vec![], false);
     assert_eq!(names(&d), names(&pdf));
     assert!(w.iter().any(|w| w.contains("different page")), "{w:?}");
 }
@@ -277,7 +299,7 @@ fn an_ai_file_read_as_its_pdf_part_keeps_its_artboard_layout() {
     (page.id, page.rect) = (2, vectorcraft_geom::Rect::new(120.0, 0.0, 220.0, 100.0));
     pdf.artboards.push(page);
     let squares = |d: &Document| d.layers[0].children().unwrap().iter().map(|n| n.visual_bounds().unwrap().origin()).collect::<Vec<_>>();
-    let (d, w) = crate::layered_ai(&private(&unread(&[(0, 0), (0, -150)])), pdf.clone(), vec![], false);
+    let (d, w, _) = crate::layered_ai(&private(&unread(&[(0, 0), (0, -150)])), pdf.clone(), vec![], false);
     assert!(w.iter().any(|w| w.contains("layers weren't read")), "{w:?}");
     let rects: Vec<_> = d.artboards.iter().map(|a| a.rect).collect();
     assert_eq!(rects, [vectorcraft_geom::Rect::new(0.0, 0.0, 100.0, 100.0), vectorcraft_geom::Rect::new(0.0, 150.0, 100.0, 250.0)]);
@@ -286,7 +308,7 @@ fn an_ai_file_read_as_its_pdf_part_keeps_its_artboard_layout() {
     assert!((moved[1] - vectorcraft_geom::Point::new(10.0, 160.0)).hypot() < 1e-6, "the second's goes with its page: {moved:?}");
     // Artboards that don't match the pages leave them in a row.
     for list in [&[(0, 0)][..], &[(0, 0), (0, -150), (200, 0)]] {
-        let (d, _) = crate::layered_ai(&private(&unread(list)), pdf.clone(), vec![], false);
+        let (d, _, _) = crate::layered_ai(&private(&unread(list)), pdf.clone(), vec![], false);
         assert_eq!(d.artboards[1].rect, pdf.artboards[1].rect, "{list:?}");
     }
 }
@@ -328,12 +350,32 @@ fn every_artboard_is_compared_with_its_page() {
         pdf.artboards.push(page);
         pdf
     };
-    let (d, w) = crate::layered_ai(&private(&art), pdf_with(Some((130.0, 10.0, 60.0))), vec![], false);
+    let (d, w, _) = crate::layered_ai(&private(&art), pdf_with(Some((130.0, 10.0, 60.0))), vec![], false);
     assert!(w.iter().any(|w| w.contains("layers weren't read") && w.contains("artboard 2")), "{w:?}");
     assert_eq!(d.layers.len(), 1, "the PDF part");
-    let (d, w) = crate::layered_ai(&private(&art), pdf_with(None), vec![], false);
+    let (d, w, used) = crate::layered_ai(&private(&art), pdf_with(None), vec![], false);
+    assert!(used);
     assert_eq!(names(&d), ["Art"], "{w:?}");
     assert!(w.iter().any(|w| w.starts_with(crate::import::ai::OBJECTS_LEFT_OUT) && w.ends_with("(Mesh: 1)") && crate::is_loss(w)), "{w:?}");
+    assert!(!w.iter().any(|w| w.starts_with(super::native::UNCOMPARED)), "every artboard was compared: {w:?}");
+    // An artboard of another size than its page isn't compared: with an object left out (or an
+    // operator skipped) anywhere, that is said, naming it, as a loss.
+    let narrow = art.replace("100 -150 /RealPointRelToROrigin", "80 -150 /RealPointRelToROrigin");
+    let (d, w, _) = crate::layered_ai(&private(&narrow), pdf_with(None), vec![], false);
+    assert_eq!(names(&d), ["Art"], "{w:?}");
+    assert!(w.iter().any(|w| w.starts_with(super::native::UNCOMPARED) && w.contains("(2;") && crate::is_loss(w)), "{w:?}");
+    // Without anything skipped or left out, an uncompared artboard is no loss.
+    let plain = narrow.replace(mesh, "");
+    let (_, w, _) = crate::layered_ai(&private(&plain), pdf_with(None), vec![], false);
+    assert!(!w.iter().any(|w| crate::is_loss(w)), "{w:?}");
+    // An operator skipped where the art lies outside every compared artboard (a square far off
+    // both): what it set may be art the document lacks, a loss; on the artboards, no loss.
+    let off = art.replace(mesh, &format!("0 0 0 1 0 0 Zq\n{}", square(300, 300)));
+    let (_, w, _) = crate::layered_ai(&private(&off), pdf_with(None), vec![], false);
+    assert!(w.iter().any(|w| w.starts_with(crate::import::ai::OPERATORS_SKIPPED_UNCHECKED) && w.contains("`Zq`") && crate::is_loss(w)), "{w:?}");
+    let on = art.replace(mesh, "0 0 0 1 0 0 Zq\n");
+    let (_, w, _) = crate::layered_ai(&private(&on), pdf_with(None), vec![], false);
+    assert!(w.iter().any(|w| w.starts_with(crate::import::ai::OPERATORS_SKIPPED) && w.contains("`Zq`") && !crate::is_loss(w)), "{w:?}");
 }
 
 #[test]
@@ -653,7 +695,7 @@ fn a_global_colour_or_a_pattern_fill_keeps_the_sublayers_of_an_ai_file() {
     let patterned = "(Dots) 0 0 1 1 0 0 0 0 0 [1 0 0 1 0 0] p\n50 50 m\n70 50 L\n70 70 L\n50 70 L\nf";
     let ground = layer("Ground", true, &(layer("Lawn", true, yellow) + &layer("Paving", false, patterned)));
     let art = native(&format!("{dots}{ground}"));
-    let (d, warnings) = crate::layered_ai(&private(&art), pdf_part(10.0, 86.0), vec![], false);
+    let (d, warnings, _) = crate::layered_ai(&private(&art), pdf_part(10.0, 86.0), vec![], false);
     assert_eq!(names(&d), ["Ground"], "{warnings:?}");
     let subs: Vec<_> = d.layers[0].children().unwrap().iter().map(|l| (l.name.clone().unwrap_or_default(), kinds(l))).collect();
     assert_eq!(subs, [("Lawn".to_string(), vec!["path"]), ("Paving".to_string(), vec!["path"])]);
@@ -738,12 +780,12 @@ fn type_asked_for_as_outlines_leaves_a_file_whose_type_shows_as_its_pdf_part() {
     let doc = text_document(&[("Hi\r", 0, (8200.0, 8180.0), (0.0, 0.0), 0.0)]);
     // Type that shows: the PDF part's outlines are its type, which the text objects can't hold.
     let shown = native_with_text(&layer("Art", true, &(square(10, 10) + "\n" + &text_object(0))), &doc);
-    let (d, w) = crate::layered_ai(&private(&shown), pdf_part(10.0, 86.0), vec![], true);
+    let (d, w, _) = crate::layered_ai(&private(&shown), pdf_part(10.0, 86.0), vec![], true);
     assert_eq!(names(&d), ["Layer 1"], "{w:?}");
     assert!(w.iter().any(|w| w.contains("layers weren't read") && w.contains("outlines")), "{w:?}");
     // Type only on a hidden layer: the layers come in.
     let hidden = native_with_text(&(layer("Art", true, &square(10, 10)) + &layer("Notes", false, &text_object(0))), &doc);
-    let (d, w) = crate::layered_ai(&private(&hidden), pdf_part(10.0, 86.0), vec![], true);
+    let (d, w, _) = crate::layered_ai(&private(&hidden), pdf_part(10.0, 86.0), vec![], true);
     assert_eq!(names(&d), ["Art", "Notes"], "{w:?}");
 }
 

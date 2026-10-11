@@ -395,11 +395,15 @@ fn what_it_doesnt_read_is_an_error_where_it_shows() {
     assert!(e.contains("pattern fills"), "{e}");
     let e = read(stream(&layer("/SymbolInstance :\n(Dot) /SymbolRef ,\n;\n")).as_bytes()).unwrap_err();
     assert!(e.contains("symbols"), "{e}");
-    // On a layer that doesn't show, it is left out of it.
+    // On a layer that doesn't show, it is left out of it (an unknown operator too: nothing checks
+    // that layer's art, so it isn't skipped as state).
     let hidden = "%AI5_BeginLayer\n0 1 1 1 0 0 0 1 255 79 79 0 50 0 Lb\n(Off) Ln\n1 2 frobnicate\n(J) 0 0 1 1 0 0 0 0 0 [1 0 0 1 0 0] p\nLB\n%AI5_EndLayer--\n";
     let r = read_ok(hidden);
-    assert_eq!(r.hidden_unread.iter().cloned().collect::<Vec<_>>(), ["pattern fills"]);
-    assert!(r.warnings.iter().any(|w| w.starts_with(read::OPERATORS_SKIPPED) && w.contains("`frobnicate`")), "{:?}", r.warnings);
+    assert_eq!(r.hidden_unread.iter().cloned().collect::<Vec<_>>(), ["`frobnicate`", "pattern fills"]);
+    assert!(r.skipped.is_empty() && r.warnings.is_empty(), "{:?} {:?}", r.skipped, r.warnings);
+    // On one that shows, between objects, it is skipped: the importer notes it.
+    let r = read_ok(&layer("1 2 frobnicate\n"));
+    assert_eq!(r.skipped.iter().cloned().collect::<Vec<_>>(), ["frobnicate"]);
     // Unbalanced containers, a layer that doesn't end, no layers.
     assert!(read(stream(&layer("U\n")).as_bytes()).is_err());
     assert!(read(stream("%AI5_BeginLayer\n(L) Ln\n0 Ae\nu\n").as_bytes()).is_err());

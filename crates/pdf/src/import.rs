@@ -207,8 +207,14 @@ pub fn import_with_report(bytes: &[u8], opts: &ImportOptions) -> Result<ImportRe
         let mut ctx = Context::new(xf, ab, &cache, pdf.xref(), settings.clone());
         b.page = ab;
         let mut scan = scan_page(page, &mut ocgs, all_on, &mut b.fonts);
+        // A PDF-compatible `.ai` (the editor's private data next to the PDF art).
+        let ai = crate::pages::has_private_data(page);
         if route {
-            ocgs.merge_repeats(&mut scan);
+            // Its layers are the document's, the same on every artboard; a plain PDF's groups are
+            // each their own layer.
+            if ai {
+                ocgs.merge_repeats(&mut scan);
+            }
             let mut seen = HashSet::new();
             let marked: Vec<usize> = scan.tags.iter().filter_map(|(_, g)| g.map(|g| top_group(g, &ocgs))).filter(|g| seen.insert(*g)).collect();
             merge_order(&mut order, &mut known, &marked);
@@ -216,8 +222,6 @@ pub fn import_with_report(bytes: &[u8], opts: &ImportOptions) -> Result<ImportRe
         b.begin_page(scan);
         interpret_page(page, &mut ctx, &mut b);
         let mut parts = b.end_page();
-        // A PDF-compatible `.ai` (the editor's private data next to the PDF art).
-        let ai = crate::pages::has_private_data(page);
         if ai {
             drop_page_fill(&mut parts, xf.transform_rect_bbox(crate::pages::page_box(page, CropTo::Crop)));
             b.warn(OFF_ARTBOARD_NOTE);

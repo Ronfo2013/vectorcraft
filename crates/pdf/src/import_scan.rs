@@ -205,6 +205,9 @@ impl Ocgs {
         let mut on_page: Vec<usize> = vec![];
         let mut seen = HashSet::new();
         for g in scan.tags.iter().filter_map(|(_, g)| *g) {
+            if seen.contains(&g) {
+                continue;
+            }
             let mut chain = vec![g];
             let mut at = g;
             while let Some(p) = self.list.get(at).and_then(|o| o.parent).filter(|_| chain.len() <= MAX_NESTING) {
