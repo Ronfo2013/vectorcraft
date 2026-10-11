@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (units survive an SVG save, #864; earlier: a marquee needs to touch a path, not just lie inside its fill, #1103; Live Corners round corners between curved sides, #1144) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (bezier drag previews follow the pointer back into the window and to the release, #834; units survive an SVG save, #864; earlier: a marquee needs to touch a path, not just lie inside its fill, #1103; Live Corners round corners between curved sides, #1144) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft's tools, handles, snapping and panels behave next to Illustrator's. A vector illustrator's
 trust is in the details: where a handle lands, what Shift and Alt do mid-drag, what a smart guide snaps to,
@@ -38,7 +38,7 @@ tools, never checked side by side) isn't captured row by row.
 
 | Behaviour (Illustrator, public docs) | Status | Notes |
 |---|---|---|
-| Click: corner anchor; drag: smooth anchor with symmetric handles | done | `pen.rs` |
+| Click: corner anchor; drag: smooth anchor with symmetric handles | done | `pen.rs`; the drag's preview follows every pointer position, back into the window after leaving it and in the release's frame, and the release commits where the pointer let go (#834) |
 | Shift constrains segments and handles to 45° | done | Illustrator's Constrain Angle preference is honoured (`constrainAngle`) |
 | Alt mid-drag splits the handles (only the outgoing follows) | done | keeps the curve already shaped |
 | Space mid-drag repositions the anchor, handles and all | done | |
@@ -66,7 +66,7 @@ tools, never checked side by side) isn't captured row by row.
 | Drag a curved segment to bend it, a straight one to move its anchors | done | |
 | Drag by an anchor of a path selected whole moves the whole path; Alt-drag by an anchor or a segment copies it, Alt toggles the copy during the drag, and the copy snaps by the anchor pressed, onto the original too | done | #1104 |
 | Handles shown are the handles that drag; tolerance from Selection & Anchor Display | done | #494 |
-| Drag a handle with Shift (45° about its anchor), Alt (move one handle alone) | done | handles snap to smart guides |
+| Drag a handle with Shift (45° about its anchor), Alt (move one handle alone) | done | handles snap to smart guides; handle and anchor drags no longer stall when the pointer leaves and re-enters the window (#834) |
 | Show handles when multiple anchors are selected; Highlight anchors on mouse over; anchor and handle size | done | Preferences › Selection & Anchor Display |
 | Convert selected anchors to corner/smooth from the Control bar and Properties | done | |
 | Cut path at selected anchors, Remove Anchor Points, Delete removes segments | done | |
@@ -170,6 +170,7 @@ re-measure of the panels added since.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Pen, Anchor Point and Direct Selection drags: the preview gets every pointer position, including after the pointer re-enters the window and the move in the release's frame (#834); score unchanged (estimated) |
 | 2026-10-11 | minor | Units: a document saved as SVG reopens in its own units (#864); score unchanged (estimated) |
 | 2026-10-11 | minor | A marquee inside a filled shape no longer selects it: only touching its path does (#1103); score unchanged (estimated) |
 | 2026-10-11 | minor | Live Corners: corners between curved sides round too, the curve trimmed to what the cut leaves (#1144); score unchanged (estimated) |
