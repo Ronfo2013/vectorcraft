@@ -155,16 +155,18 @@ fn what_the_layers_cant_say_keeps_the_page_when_it_shows_and_not_when_it_doesnt(
     let r = import(&eps(&page_square(10, 10), &hidden)).unwrap();
     assert_eq!(names(&r.document), ["Art", "Old"]);
     assert!(r.warnings.iter().any(|w| w.contains("hidden layers have art this can't read")), "{:?}", r.warnings);
-    // Between objects it is state this doesn't model: skipped, the layers used, a note (no loss:
-    // the page comparison covers the art round it).
+    // Between objects it is state this doesn't model: skipped, the layers used, a note. An EPS's
+    // page is read by VectorCraft's own interpreter, so it can't show what the operator set isn't
+    // art the document lacks: a loss (only a `.ai`'s PDF part, every artboard compared, can).
     let state = native(&layer("Art", true, &format!("{}\n0 0 0 1 0 0 Zq", square(10, 10))));
     let r = import(&eps(&page_square(10, 10), &state)).unwrap();
     assert_eq!(names(&r.document), ["Art"], "{:?}", r.warnings);
     assert!(
-        r.warnings.iter().any(|w| w.starts_with(crate::import::ai::OPERATORS_SKIPPED) && w.contains("`Zq`") && !crate::is_loss(w)),
+        r.warnings.iter().any(|w| w.starts_with(crate::import::ai::OPERATORS_SKIPPED_UNCHECKED) && w.contains("`Zq`") && crate::is_loss(w)),
         "{:?}",
         r.warnings
     );
+    assert!(!r.warnings.iter().any(|w| w.starts_with(crate::import::ai::OPERATORS_SKIPPED) && !crate::is_loss(w)), "{:?}", r.warnings);
     // On a hidden layer nothing checks it: that layer's art counts as unread (a loss), as before.
     let hidden_state = native(&(layer("Art", true, &square(10, 10)) + &layer("Old", false, "0 0 0 1 0 0 Zq")));
     let r = import(&eps(&page_square(10, 10), &hidden_state)).unwrap();

@@ -960,7 +960,10 @@ fn build(data: &[u8], visible: Option<&Document>, page: Page, outlined: bool) ->
                 ));
             }
             if !skipped.is_empty() {
-                let covered = compared.uncompared.is_empty() && !art_outside(&doc, &compared.rects);
+                // Only a `.ai`'s PDF part, drawn by the app that wrote the file, every artboard
+                // compared and no art off them, shows what they set isn't art the document
+                // lacks. An EPS's page is read by VectorCraft's own interpreter: not a check.
+                let covered = matches!(page, Page::Artboard) && compared.uncompared.is_empty() && !art_outside(&doc, &compared.rects);
                 notes.push(if covered {
                     format!("{} ({}): what they set isn't read", ai::OPERATORS_SKIPPED, ops())
                 } else {
