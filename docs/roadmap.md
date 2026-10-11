@@ -1,6 +1,6 @@
 # Roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G11 and Current focus: #893 fixed, #937 open; M7: accurate character controls after object/group scaling, #1034) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G11: SVG keeps the document's units, #864; earlier: #893 fixed, #937 open; M7: accurate character controls after object/group scaling, #1034) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Forward-looking plan. Where VectorCraft stands is in [`ROADMAP.md`](../ROADMAP.md) and
 [target-app-parity.md](target-app-parity.md); the ranked work list is [gaps.md](gaps.md). Hours are Opus 5.5
@@ -30,7 +30,7 @@ Checked 2026-10-10 from the code, tests and open issues; no workflow fails, so V
    Selection, smart guides and snapping first. 60–90 h, parallel by tool.
 2. **`.ai` files from real users** (G9): layer structure (#951, #868), guides (#779). 10–20 h.
 3. **Launch and stability** (G10): the Windows and Linux start-up reports. 20–35 h.
-4. **Core-tool bugs** (G11): Shape Builder regions (#937), Asset Export borders (#983). 8–15 h.
+4. **Core-tool bugs** (G11): Shape Builder regions (#937), Asset Export borders (#983); SVG units (#864) fixed. 8–15 h.
 5. **Raster effects** (G2) continue alongside: Artistic, Sketch, then the Effect Gallery. 24–40 h.
 
 ## Next
@@ -79,6 +79,7 @@ After placed documents (File › Place of a `.vectorcraft` file, linked), M4.14�
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | #864 (SVG files lost the document's units) fixed; G11 keeps #937 and its 8–15 h |
 | 2026-10-11 | minor | #893 (Shape Builder seams on grids of lines) fixed; G11 keeps #937 and its 8–15 h |
 | 2026-10-10 | minor | M7: document-point character sizes, leading and baseline shift, and resettable horizontal stretching after object/group scaling (#1034). Optional group font-size preservation remains separate; scores/hours unchanged. |
 | 2026-10-10 | minor | M9 row from main: initial Revolve |

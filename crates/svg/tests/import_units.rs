@@ -132,3 +132,47 @@ fn absolute_lengths_in_a_pixel_document_keep_their_size() {
     assert!(close_rect(n.geometric_bounds().unwrap(), Rect::new(0.0, 0.0, 72.0, 720.0 / 25.4)), "{:?}", n.geometric_bounds());
     assert!(close(n.appearance.stroke_width(), 2.0));
 }
+
+/// #864: a document's units survive an SVG round trip, and so does its artboard size. The root
+/// `width`/`height` carry the unit (`width="210mm"`, SVG 1.1 §7.10 / §5.1.2), with the `viewBox`
+/// in user units (points, as the model is); a document in pixels writes unitless lengths, which
+/// are pixels (SVG 1.1 §7.10: "a user unit is equivalent to a CSS px"), and comes back in pixels.
+#[test]
+fn document_units_survive_a_round_trip() {
+    use vectorcraft_svg::{ExportOptions, export};
+    for (unit, w, h) in [
+        (Unit::Millimeters, 210.0 * 72.0 / 25.4, 297.0 * 72.0 / 25.4),
+        (Unit::Centimeters, 10.0 * 72.0 / 2.54, 5.0 * 72.0 / 2.54),
+        (Unit::Inches, 8.5 * 72.0, 11.0 * 72.0),
+        (Unit::Points, 200.0, 100.0),
+        (Unit::Picas, 12.0 * 30.0, 12.0 * 20.0),
+        (Unit::Pixels, 400.0, 300.0),
+    ] {
+        let mut d = Document::new(w, h);
+        d.units = unit;
+        let l = d.layers[0].id;
+        let r = Rect::new(10.0, 20.0, 110.0, 70.0);
+        let node = Node::path(d.alloc_id(), vectorcraft_geom::shapes::rectangle(r), vectorcraft_doc::Appearance::default_art());
+        d.insert(Some(l), usize::MAX, node).unwrap();
+        let svg = export(&d, &ExportOptions::default());
+        let back = import(&svg).unwrap_or_else(|e| panic!("{unit:?}: {e}\n{svg}"));
+        assert_eq!(back.units, unit, "{svg}");
+        assert!(close_rect(back.artboards[0].rect, Rect::new(0.0, 0.0, w, h)), "{unit:?}: {:?}\n{svg}", back.artboards[0].rect);
+        let b = art(&back)[0].geometric_bounds().unwrap();
+        assert!(close_rect(b, r), "{unit:?}: {b:?}\n{svg}");
+    }
+    // Pixels write unitless lengths, as the web expects.
+    let mut d = Document::new(400.0, 300.0);
+    d.units = Unit::Pixels;
+    let svg = export(&d, &ExportOptions::default());
+    assert!(svg.contains(r#"width="400" height="300""#), "{svg}");
+    // The units SVG has no name for write the nearest it has, and come back as that.
+    for (unit, w, back_unit) in [(Unit::Feet, 72.0 * 12.0, Unit::Inches), (Unit::Meters, 72.0 / 0.0254, Unit::Centimeters)] {
+        let mut d = Document::new(w, w);
+        d.units = unit;
+        let svg = export(&d, &ExportOptions::default());
+        let back = import(&svg).unwrap();
+        assert_eq!(back.units, back_unit, "{svg}");
+        assert!(close_rect(back.artboards[0].rect, Rect::new(0.0, 0.0, w, w)), "{unit:?}: {:?}\n{svg}", back.artboards[0].rect);
+    }
+}

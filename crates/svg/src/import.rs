@@ -68,7 +68,7 @@ pub(crate) fn import(svg: &str, opts: &ImportOptions) -> Result<(Document, Vec<S
         data: found.data,
         sublayers: found.sublayers,
         sublayer_groups: HashSet::new(),
-        screen: k,
+        screen: units.screen,
     };
     if im.files.nested_text() {
         im.warn("text inside an SVG image isn't imported".into());
@@ -215,11 +215,19 @@ pub(super) const DEFAULT_FONT_SIZE: f64 = 12.0;
 /// (96 per inch, 0.75 pt each), so a drawing without a `viewBox` keeps its proportions. With one
 /// side absolute and the other not (`width="96pt" height="96"`), both are: the unitless side is
 /// CSS pixels too, so the drawing isn't stretched (#1010).
+///
+/// A root in absolute units with a `viewBox` (`width="200pt" viewBox="0 0 200 200"`, as we write
+/// a document in points, #864) is converted at 72 per inch with user units read as points: the
+/// same mapping (the `viewBox` scale absorbs the pixel size), computed without the 96/72 detour
+/// so a document in points comes back with its coordinates exact (usvg works in `f32`).
 struct RootUnits {
     /// Pixels per inch usvg (and the text pass) convert absolute lengths at.
     dpi: f64,
     /// Points per user unit of the root, along both axes.
     k: f64,
+    /// Points per screen pixel (a CSS pixel of a root in absolute units): what a non-scaling
+    /// stroke's width is measured in.
+    screen: f64,
     /// Document units: those of the root `width` (pixels when it has none).
     unit: Unit,
 }
@@ -230,7 +238,11 @@ impl RootUnits {
         use svgtypes::LengthUnit as U;
         let physical = |u: Option<U>| matches!(u, Some(U::In | U::Cm | U::Mm | U::Pt | U::Pc));
         let (w, h) = (unit("width"), unit("height"));
-        let (dpi, k) = if physical(w) || physical(h) { (CSS_PX_PER_IN, PT_PER_IN / CSS_PX_PER_IN) } else { (PT_PER_IN, 1.0) };
+        let any_physical = physical(w) || physical(h);
+        // Both given sides absolute, with a viewBox: user units are points, exactly.
+        let exact = any_physical && root.has_attribute("viewBox") && [w, h].iter().all(|u| u.is_none() || physical(*u));
+        let (dpi, k) = if any_physical && !exact { (CSS_PX_PER_IN, PT_PER_IN / CSS_PX_PER_IN) } else { (PT_PER_IN, 1.0) };
+        let screen = if any_physical { PT_PER_IN / CSS_PX_PER_IN } else { 1.0 };
         let unit = match w {
             Some(U::Mm) => Unit::Millimeters,
             Some(U::Cm) => Unit::Centimeters,
@@ -239,7 +251,7 @@ impl RootUnits {
             Some(U::Pc) => Unit::Picas,
             _ => Unit::Pixels,
         };
-        Self { dpi, k, unit }
+        Self { dpi, k, screen, unit }
     }
 }
 

@@ -39,7 +39,7 @@ pub(super) fn image_session() -> Session {
 fn every_option_changes_the_output() {
     let mut s = session(1);
     let plain = svg(&mut s, json!({}));
-    assert!(plain.contains("fill=\"#") && plain.contains(" width=\"200\"") && plain.contains("id=\"Layer_1\""), "{plain}");
+    assert!(plain.contains("fill=\"#") && plain.contains(" width=\"200pt\"") && plain.contains("id=\"Layer_1\""), "{plain}");
     let changed = |s: &mut Session, p: Value, check: &dyn Fn(&str) -> bool| {
         let out = svg(s, p.clone());
         assert_ne!(out, plain, "{p} changed nothing");
@@ -237,4 +237,24 @@ fn svgz_opens_and_pastes_like_svg() {
     let r = s.execute("clipboard.importSvg", &json!({"dataBase64": vectorcraft_format::base64_encode(&vectorcraft_svg::compress(&text))})).unwrap();
     assert_eq!(r["count"], 2);
     assert!(s.execute("document.open", &json!({"name": "bad.svgz", "dataBase64": vectorcraft_format::base64_encode(&[0x1f, 0x8b, 1, 2])})).is_err());
+}
+
+/// #864: a document in millimetres (or any unit) saved as SVG and opened again is still in
+/// millimetres, at the same artboard size, without Preserve Editing: the root `width`/`height`
+/// carry the unit.
+#[test]
+fn saved_svg_keeps_the_document_units() {
+    for (unit, label) in [("mm", "Millimeters"), ("in", "Inches"), ("px", "Pixels"), ("pt", "Points")] {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 100, "height": 50, "units": unit})).unwrap();
+        let before = s.doc().unwrap().doc.artboards[0].rect;
+        let text = svg(&mut s, json!({}));
+        assert!(!text.contains(vectorcraft_svg::EDITING_NS));
+        let r = s.execute("document.open", &json!({"name": "units.svg", "dataBase64": vectorcraft_format::base64_encode(text.as_bytes())})).unwrap();
+        assert_eq!(r["restored"], json!(false), "{r}");
+        let d = &s.doc().unwrap().doc;
+        assert_eq!(d.units.label(), label, "{text}");
+        let after = d.artboards[0].rect;
+        assert!((after.width() - before.width()).abs() < 0.01 && (after.height() - before.height()).abs() < 0.01, "{before:?} → {after:?}\n{text}");
+    }
 }
