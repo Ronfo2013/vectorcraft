@@ -415,3 +415,94 @@ fn leading_nudge_starts_from_the_paragraphs_auto_leading() {
     s.execute("type.step", &json!({"attribute": "leading", "id": id})).unwrap();
     assert!(text(&s, id).runs.iter().all(|r| r.style.leading.is_some_and(|l| (l - (12.0 + inc)).abs() < 1e-9)));
 }
+
+/// The document saved as `.vectorcraft` and opened again.
+fn reopen(s: &mut Session) -> Session {
+    let data = s.execute("document.export", &json!({"format": "vectorcraft"})).unwrap()["dataBase64"].clone();
+    let mut o = Session::new();
+    o.execute("document.open", &json!({"name": "hang.vectorcraft", "dataBase64": data})).unwrap();
+    o
+}
+
+/// The x where the first glyph of `t` starts, in text space.
+fn first_x(t: &TextObject) -> f64 {
+    vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t).glyphs[0].origin.x
+}
+
+/// Paragraph panel menu › Roman Hanging Punctuation: `text.romanHangingPunctuation` toggles per
+/// paragraph (one undo step), `on` sets, `query` asks; the layout hangs the quote; it is saved and
+/// read back.
+#[test]
+fn roman_hanging_punctuation_toggles_per_paragraph_undoes_and_saves() {
+    let mut s = session();
+    let id = area(&mut s, "\u{201C}One\u{201D}\n\u{201C}Two\u{201D}");
+    let edge = first_x(&text(&s, id));
+    assert_eq!(s.execute("text.romanHangingPunctuation", &json!({"ids": [id], "query": true})).unwrap(), json!({"on": false}));
+    // A caret in the second paragraph: only it.
+    let r = s.execute("text.romanHangingPunctuation", &json!({"ids": [id], "start": 12, "end": 12})).unwrap();
+    assert_eq!(r["on"], json!(true));
+    let ps = text(&s, id).paragraph_styles();
+    assert_eq!((ps[0].roman_hanging, ps[1].roman_hanging), (false, true));
+    assert_eq!(s.execute("text.romanHangingPunctuation", &json!({"ids": [id], "start": 12, "query": true})).unwrap()["on"], json!(true));
+    // Toggled over both: on (not every paragraph has it), then off.
+    s.execute("text.romanHangingPunctuation", &json!({"ids": [id]})).unwrap();
+    assert!(text(&s, id).paragraph_styles().iter().all(|p| p.roman_hanging));
+    assert!(first_x(&text(&s, id)) < edge - 1.0, "the quote hangs");
+    s.execute("text.romanHangingPunctuation", &json!({"ids": [id]})).unwrap();
+    assert!(text(&s, id).paragraph_styles().iter().all(|p| !p.roman_hanging));
+    // One undo step each.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(text(&s, id).paragraph_styles().iter().all(|p| p.roman_hanging));
+    s.execute("edit.undo", &json!({})).unwrap();
+    let ps = text(&s, id).paragraph_styles();
+    assert_eq!((ps[0].roman_hanging, ps[1].roman_hanging), (false, true));
+    // Bad parameters are refused, nothing changes.
+    for bad in [json!({"on": 1}), json!({"query": "yes"}), json!({"on": true, "query": true}), json!({"hang": true})] {
+        let mut p = bad.clone();
+        p["ids"] = json!([id]);
+        assert!(s.execute("text.romanHangingPunctuation", &p).is_err(), "{bad}");
+    }
+    s.execute("text.romanHangingPunctuation", &json!({"ids": [id], "on": true})).unwrap();
+    let hung = first_x(&text(&s, id));
+    let o = reopen(&mut s);
+    let back = text(&o, id);
+    assert!(back.paragraph_styles().iter().all(|p| p.roman_hanging));
+    assert_eq!(first_x(&back), hung);
+}
+
+/// Type › Optical Margin Alignment: `type.opticalMarginAlignment` toggles the story's option (all
+/// its threaded frames), one undo step; saved and read back.
+#[test]
+fn optical_margin_alignment_toggles_the_story_undoes_and_saves() {
+    let mut s = session();
+    let id = area(&mut s, "Wave \u{201C}quoted\u{201D}");
+    let edge = first_x(&text(&s, id));
+    s.execute("select.set", &json!({"ids": [id]})).unwrap();
+    assert_eq!(s.execute("type.opticalMarginAlignment", &json!({"query": true})).unwrap()["on"], json!(false));
+    assert_eq!(s.execute("type.opticalMarginAlignment", &json!({})).unwrap()["on"], json!(true));
+    assert!(text(&s, id).optical_margin);
+    assert!(first_x(&text(&s, id)) < edge, "the W stands outside");
+    assert_eq!(s.execute("type.opticalMarginAlignment", &json!({"query": true})).unwrap()["on"], json!(true));
+    s.execute("type.opticalMarginAlignment", &json!({})).unwrap();
+    assert!(!text(&s, id).optical_margin);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(text(&s, id).optical_margin);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(!text(&s, id).optical_margin);
+    assert_eq!(first_x(&text(&s, id)), edge);
+    assert!(s.execute("type.opticalMarginAlignment", &json!({"on": "yes"})).is_err());
+    assert!(s.execute("type.opticalMarginAlignment", &json!({"margin": true})).is_err());
+    // Threaded frames share the story's setting.
+    let story = "The quick brown fox jumps over the lazy dog and keeps running. ".repeat(4);
+    let a =
+        s.execute("text.create", &json!({"x": 10, "y": 300, "text": story, "area": {"width": 150, "height": 40}})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.rectangle", &json!({"x": 200, "y": 300, "width": 150, "height": 200})).unwrap()["id"].as_u64().unwrap();
+    s.execute("select.set", &json!({"ids": [a, b]})).unwrap();
+    s.execute("text.thread.create", &json!({})).unwrap();
+    s.execute("type.opticalMarginAlignment", &json!({"ids": [a], "on": true})).unwrap();
+    assert!(text(&s, a).optical_margin && text(&s, b).optical_margin);
+    s.execute("type.opticalMarginAlignment", &json!({"ids": [id], "on": true})).unwrap();
+    let o = reopen(&mut s);
+    assert!(text(&o, id).optical_margin && text(&o, a).optical_margin && text(&o, b).optical_margin);
+    assert_eq!(first_x(&text(&o, id)), first_x(&text(&s, id)));
+}

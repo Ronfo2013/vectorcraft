@@ -181,21 +181,26 @@ proptest! {
     #![proptest_config(ProptestConfig { cases: 64, failure_persistence: None, ..ProptestConfig::default() })]
 
     /// Paragraph Hyphenation and Justification options, however wild in memory, survive save →
-    /// load inside their fields' ranges (what the layout reads), and the text lays out finite.
+    /// load inside their fields' ranges (what the layout reads), Roman Hanging Punctuation and
+    /// Optical Margin Alignment exactly, and the text lays out finite.
     #[test]
     fn paragraph_options_roundtrip_clamped_and_lay_out_finite(
         (h, j) in arb_paragraph_options(),
         justify in prop_oneof![Just(vectorcraft_doc::Justify::JustifyLeft), Just(vectorcraft_doc::Justify::JustifyAll), Just(vectorcraft_doc::Justify::Left)],
         hyphenate in any::<bool>(),
+        roman in any::<bool>(),
+        optical in any::<bool>(),
     ) {
         use vectorcraft_doc::{TextKind, TextObject};
-        let mut t = TextObject::point(vectorcraft_geom::Point::ZERO, "Extraordinarily comprehensive typography notwithstanding. Words\nTypography", vectorcraft_doc::CharStyle::default());
+        let mut t = TextObject::point(vectorcraft_geom::Point::ZERO, "\u{201C}Extraordinarily\u{201D} comprehensive typography -- notwithstanding. Words, \"quoted\": Wave\nTypography", vectorcraft_doc::CharStyle::default());
         t.kind = TextKind::Area { frame: vectorcraft_geom::shapes::rectangle(vectorcraft_geom::Rect::new(0.0, 0.0, 90.0, 400.0)) };
         t.xf = Affine::IDENTITY;
         t.para.justify = justify;
         t.para.hyphenate = hyphenate;
         t.para.hyphenation = h.clone();
         t.para.justification = j.clone();
+        t.para.roman_hanging = roman;
+        t.optical_margin = optical;
         let mut d = Document::new(200.0, 500.0);
         let layer = d.add_layer(None);
         let id = d.alloc_id();
@@ -205,6 +210,7 @@ proptest! {
             check_document(&back).map_err(TestCaseError::fail)?;
             let Some(NodeKind::Text(t)) = back.node(id).map(|n| &n.kind) else { return Err(TestCaseError::fail("text lost")) };
             prop_assert_eq!(&t.para.hyphenation, &h.clamped());
+            prop_assert_eq!((t.para.roman_hanging, t.optical_margin), (roman, optical));
             let jc = j.clamped();
             prop_assert_eq!(&t.para.justification, &jc);
             for r in [jc.word_spacing, jc.letter_spacing, jc.glyph_scaling] {

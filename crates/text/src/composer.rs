@@ -113,8 +113,11 @@ fn fitness(r: f64, ragged: bool) -> u8 {
 }
 
 /// Compose the paragraph `g` into lines. `width(k)` is the available width of line `k`;
-/// `start_credit(i)` is the width a wrapped line starting at glyph `i` gives back (Mojikumi sets
-/// an opening bracket there flush with the line's start); `cands` are the break opportunities
+/// `start_credit(i)` is the width a line starting at glyph `i` gives back (Mojikumi sets an
+/// opening bracket starting a wrapped line flush with the line's start; hanging punctuation hangs
+/// its first character outside it); `end_credit(t, hyphenated)` the width a line ending before
+/// glyph `t` (trailing spaces dropped) gives back by hanging its last character or its hyphen;
+/// `cands` are the break opportunities
 /// in increasing order (the paragraph end is added); `units[i]` is the width a letter gap after
 /// glyph `i` stretches or shrinks by per unit of letter spacing (a space's width; missing: 0).
 /// Returns `(end, hyphen)` per line, or `None` if no set of breaks fits within the tolerance
@@ -123,6 +126,7 @@ pub(crate) fn compose(
     g: &[SGlyph],
     width: &dyn Fn(usize) -> f64,
     start_credit: &dyn Fn(usize) -> f64,
+    end_credit: &dyn Fn(usize, bool) -> f64,
     cands: &[Breakpoint],
     units: &[f64],
     p: &Params,
@@ -181,7 +185,7 @@ pub(crate) fn compose(
             // Hyphen Limit: this line would be one too many in a row ending in a hyphen.
             let refused = bp.auto && bp.hyphen > 0.0 && p.hyphen_limit > 0 && a.run >= p.hyphen_limit;
             let t = trim(bp.end, a.pos);
-            let credit = if a.pos > 0 { start_credit(a.pos) } else { 0.0 };
+            let credit = start_credit(a.pos) + if t > a.pos { end_credit(t, bp.hyphen > 0.0) } else { 0.0 };
             let natural = w[t] - w[a.pos] - credit + bp.hyphen;
             let lw = width(a.line);
             // Adjustment ratio, badness and whether the line ends the active node's reach.

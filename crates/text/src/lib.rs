@@ -15,6 +15,7 @@ pub mod edit;
 pub mod embed;
 mod features;
 mod fontdb;
+pub mod hang;
 pub mod hyphen;
 mod justify;
 mod layout;
@@ -511,6 +512,8 @@ mod tests_combos;
 mod tests_embed;
 #[cfg(test)]
 mod tests_fit;
+#[cfg(test)]
+mod tests_hang;
 #[cfg(test)]
 mod tests_inline;
 #[cfg(test)]

@@ -432,7 +432,8 @@ fn area_options_fit_junk() {
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
 }
 
-/// Paragraph panel menu › Hyphenation… and Justification… with junk values, on selected area type
+/// Paragraph panel menu › Hyphenation…, Justification… and Roman Hanging Punctuation, and Type ›
+/// Optical Margin Alignment, with junk values, on selected area type
 /// (the fixtures have none): never a panic, every junk value refused or clamped, the document stays
 /// sound and its layout finite.
 #[test]
@@ -472,6 +473,25 @@ fn paragraph_options_junk() {
         ("text.justification", json!({"singleWordJustification": "legacy"})),
         ("text.justification", json!({"glyphScalingMin": 200, "glyphScalingDesired": 200, "glyphScalingMax": 200, "autoLeading": 500})),
     ]);
+    // Roman Hanging Punctuation and Optical Margin Alignment: junk `on`/`query`, then on, so the
+    // following cases lay out with both hanging.
+    for cmd in ["text.romanHangingPunctuation", "type.opticalMarginAlignment"] {
+        for key in ["on", "query"] {
+            for v in &junk {
+                cases.push((cmd, json!({ key: v })));
+            }
+        }
+        cases.extend([
+            (cmd, json!({"on": true, "query": true})),
+            (cmd, json!({"bogus": true})),
+            (cmd, json!({"ids": [u64::MAX, "x"], "start": u64::MAX, "end": -1})),
+            (cmd, json!({})),
+            (cmd, json!({"query": true})),
+            (cmd, json!({"on": true, "start": 3, "end": 1})),
+        ]);
+    }
+    let hung: Vec<(&str, Value)> = cases.iter().filter(|(c, _)| c.starts_with("text.")).cloned().collect();
+    cases.extend(hung);
     let story = "Extraordinarily comprehensive typographical considerations. Words that overflow a small frame. ".repeat(10);
     let mut failures = vec![];
     for (size, (w, h)) in [(12.0, (120.0, 400.0)), (0.1, (1.0, 1.0)), (1296.0, (100_000.0, 1.0))] {

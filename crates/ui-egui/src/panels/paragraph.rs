@@ -222,7 +222,11 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
         set_pstate(ui.ctx(), "pa-hide-options", !hidden);
     }
     ui.separator();
-    menu_item(ui, tl!("Roman Hanging Punctuation"), false, false);
+    // Quotes, hyphens, full stops and commas at either edge of a line hang outside it.
+    let roman = style.as_ref().is_some_and(|(_, p)| p.roman_hanging);
+    if menu_item(ui, tl!("Roman Hanging Punctuation"), has, roman) {
+        para_cmd(app, "text.romanHangingPunctuation", json!({}));
+    }
     for (l, id) in [(tl!("Justification…"), "text.justification"), (tl!("Hyphenation…"), "text.hyphenation")] {
         if menu_item(ui, l, has, false)
             && let Err(e) = options_dialog(app, id)
@@ -275,6 +279,7 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
             app,
             json!({"leftIndent": 0, "rightIndent": 0, "firstLineIndent": 0, "spaceBefore": 0, "spaceAfter": 0, "hyphenate": false, "direction": "auto", "leadingModel": "romanBaseline", "burasagari": "standard", "kinsoku": "hard", "composer": "everyLine"}),
         );
+        para_cmd(app, "text.romanHangingPunctuation", json!({"on": false}));
     }
 }
 
