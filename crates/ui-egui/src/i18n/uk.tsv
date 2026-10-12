@@ -4134,3 +4134,25 @@ lighting	Light	Світло
 	Linux Display Server	Дисплейний сервер Linux
 	X11 (XWayland)	X11 (XWayland)
 @msg	{PATCH} (over the size limit)	{PATCH} (перевищено межу розміру)
+	Justification	Вирівнювання за форматом
+	Words Longer Than	Слова довші за
+	After First	Після перших
+	Before Last	Перед останніми
+	Hyphen Limit	Межа переносів поспіль
+	Hyphenation Zone	Зона переносу
+	Hyphenate Capitalized Words	Переносити слова з великої літери
+	Word Spacing Minimum	Інтервал між словами: мінімум
+	Word Spacing Desired	Інтервал між словами: бажано
+	Word Spacing Maximum	Інтервал між словами: максимум
+	Letter Spacing Minimum	Інтервал між літерами: мінімум
+	Letter Spacing Desired	Інтервал між літерами: бажано
+	Letter Spacing Maximum	Інтервал між літерами: максимум
+	Glyph Scaling Minimum	Масштаб гліфів: мінімум
+	Glyph Scaling Desired	Масштаб гліфів: бажано
+	Glyph Scaling Maximum	Масштаб гліфів: максимум
+	Auto Leading	Автоінтерліньяж
+	Single Word Justification	Вирівнювання одного слова
+	Full Justify	Вирівняти за форматом
+	Align Left	Вирівняти ліворуч
+	Align Center	Вирівняти по центру
+	Align Right	Вирівняти праворуч

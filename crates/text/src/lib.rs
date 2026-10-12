@@ -16,6 +16,7 @@ pub mod embed;
 mod features;
 mod fontdb;
 pub mod hyphen;
+mod justify;
 mod layout;
 mod shape;
 #[cfg(not(target_arch = "wasm32"))]
@@ -512,6 +513,8 @@ mod tests_embed;
 mod tests_fit;
 #[cfg(test)]
 mod tests_inline;
+#[cfg(test)]
+mod tests_justify;
 #[cfg(test)]
 mod tests_scripts;
 #[cfg(test)]

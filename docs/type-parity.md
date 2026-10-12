@@ -1,6 +1,6 @@
 # Type parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Proportional Metrics in vertical type, `vpal`, #966; document-point character controls after object/group scaling, #1034) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (Hyphenation… and Justification… options done: they act in the line breaker and justified lines, `text.hyphenation`, `text.justification`) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Type is Illustrator's largest single area by use (weight 13 of 105 across "Type core" and "Type advanced" in
 [target-app-parity.md](target-app-parity.md)). This checklist lists the features one by one. Status is from the
@@ -11,7 +11,7 @@ against Illustrator's public documentation; **estimated** unless noted.
 
 | Part | % | Remaining (h) |
 |---|---:|---:|
-| Type core (point, area, path type, Character/Paragraph, styles, threading, OpenType, fonts) | 80% | 14–19 |
+| Type core (point, area, path type, Character/Paragraph, styles, threading, OpenType, fonts) | 82% | 10–15 |
 | Type advanced (CJK composition, Middle Eastern, spelling, Touch Type, Retype, variable fonts) | 50% | 20–28 |
 
 ## Checklist
@@ -30,7 +30,7 @@ against Illustrator's public documentation; **estimated** unless noted.
 | Variable fonts | partial | named instances as styles; axis sliders missing |
 | Colour fonts (OpenType SVG / COLR) | partial | |
 | Every-line and Single-line composers | done | tuned by eye, never compared side by side |
-| Hyphenation… and Justification… options | missing | |
+| Hyphenation… and Justification… options | done | Paragraph panel menu dialogs, `text.hyphenation` / `text.justification`, per paragraph, saved in the file. Hyphenation: Words Longer Than, After First, Before Last, Hyphen Limit (both composers), Hyphenation Zone (Single-line Composer), Hyphenate Capitalized Words ([helpx](https://helpx.adobe.com/illustrator/using/hyphenation-line-breaks.html)). Justification: Desired word/letter spacing and glyph scaling on every line, justified lines fill within Minimum/Maximum (word spacing, then letter spacing, then glyph scaling, then the word spaces), Auto Leading, Single Word Justification ([helpx](https://helpx.adobe.com/illustrator/desktop/design-with-text/edit-format-text/adjust-word-and-letterspacing-in-justified-text.html)). Horizontal type only (vertical type keeps the defaults, Auto Leading applies); the hyphenator is VectorCraft's own pattern-free English one (no language dictionaries); not compared side by side with the reference app |
 | Optical Margin Alignment | missing | menu stub |
 | Tab stops and leaders; Tabs panel | partial | Tabs panel and stops with leaders in the model (`text.tabs.set`); leader drawing not verified against the docs |
 | Hidden characters (Show Hidden Characters) | done | `type.hiddenCharacters` |
@@ -51,6 +51,7 @@ against Illustrator's public documentation; **estimated** unless noted.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Hyphenation… and Justification… options done (composition, commands, dialogs, file format); Type core 80% → 82%, 14–19 h → 10–15 h (estimated) |
 | 2026-10-11 | minor | Proportional Metrics done: `palt` in horizontal type, `vpal` in vertical type (#966, #1082); ruby and manual tate-chu-yoko still missing |
 | 2026-10-10 | minor | #1034: transformed character controls and regression coverage; preserving group font sizes remains a separate enhancement. Scores/hours unchanged at this rounding. |
 | 2026-10-10 | major | First checklist, split out of the parity table's Type core and Type advanced rows |

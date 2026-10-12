@@ -4108,3 +4108,25 @@ theme	Appearance	Erscheinungsbild
 	Linux Display Server	Linux-Anzeigeserver
 	X11 (XWayland)	X11 (XWayland)
 @msg	{PATCH} (over the size limit)	{PATCH} (über der Größengrenze)
+	Justification	Blocksatz
+	Words Longer Than	Wörter mit mehr als
+	After First	Nach den ersten
+	Before Last	Vor den letzten
+	Hyphen Limit	Max. aufeinanderfolgende Trennstriche
+	Hyphenation Zone	Silbentrennungszone
+	Hyphenate Capitalized Words	Großgeschriebene Wörter trennen
+	Word Spacing Minimum	Wortabstand Minimum
+	Word Spacing Desired	Wortabstand Optimal
+	Word Spacing Maximum	Wortabstand Maximum
+	Letter Spacing Minimum	Zeichenabstand Minimum
+	Letter Spacing Desired	Zeichenabstand Optimal
+	Letter Spacing Maximum	Zeichenabstand Maximum
+	Glyph Scaling Minimum	Glyphenskalierung Minimum
+	Glyph Scaling Desired	Glyphenskalierung Optimal
+	Glyph Scaling Maximum	Glyphenskalierung Maximum
+	Auto Leading	Automatischer Zeilenabstand
+	Single Word Justification	Ausrichtung einzelner Wörter
+	Full Justify	Blocksatz
+	Align Left	Linksbündig
+	Align Center	Zentriert
+	Align Right	Rechtsbündig

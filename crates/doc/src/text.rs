@@ -356,6 +356,11 @@ pub struct ParaStyle {
     /// Kinsoku (Paragraph panel › Kinsoku Set): which Japanese characters may not start or end a
     /// line.
     pub kinsoku: Kinsoku,
+    /// Paragraph panel menu › Hyphenation…: which words may break and where.
+    pub hyphenation: Hyphenation,
+    /// Paragraph panel menu › Justification…: word spacing, letter spacing, glyph scaling, auto
+    /// leading and single word justification.
+    pub justification: Justification,
 }
 
 /// [`ParaStyle`] as saved. [`Justify::Auto`] is written as the alignment it has in the paragraph
@@ -395,6 +400,10 @@ struct ParaStyleFile {
     burasagari: Burasagari,
     #[serde(default, skip_serializing_if = "crate::skip::is_default")]
     kinsoku: Kinsoku,
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    hyphenation: Hyphenation,
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    justification: Justification,
 }
 
 impl From<ParaStyle> for ParaStyleFile {
@@ -420,6 +429,8 @@ impl From<ParaStyle> for ParaStyleFile {
             leading_model,
             burasagari,
             kinsoku,
+            hyphenation,
+            justification,
             ..
         } = p;
         Self {
@@ -439,6 +450,8 @@ impl From<ParaStyle> for ParaStyleFile {
             leading_model,
             burasagari,
             kinsoku,
+            hyphenation,
+            justification,
         }
     }
 }
@@ -461,6 +474,8 @@ impl From<ParaStyleFile> for ParaStyle {
             leading_model,
             burasagari,
             kinsoku,
+            hyphenation,
+            justification,
             ..
         } = f;
         Self {
@@ -479,7 +494,161 @@ impl From<ParaStyleFile> for ParaStyle {
             leading_model,
             burasagari,
             kinsoku,
+            hyphenation,
+            justification,
         }
+    }
+}
+
+/// Paragraph panel menu › Hyphenation… (the reference app's "Set hyphenation and line breaks",
+/// <https://helpx.adobe.com/illustrator/using/hyphenation-line-breaks.html>). Automatic hyphenation
+/// itself is [`ParaStyle::hyphenate`]; these say which words may break and where. Letters are
+/// counted in characters of the word without the punctuation around it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Hyphenation {
+    /// Words Longer Than _ letters: the fewest letters a hyphenated word has.
+    pub min_word: u32,
+    /// After First _ letters: the fewest letters before a hyphen.
+    pub after_first: u32,
+    /// Before Last _ letters: the fewest letters after a hyphen.
+    pub before_last: u32,
+    /// Hyphen Limit: the most consecutive lines that may end in an automatic hyphen (0: no limit).
+    pub hyphen_limit: u32,
+    /// Hyphenation Zone (points): with the Single-line Composer, a word whose line could already
+    /// end this close to the right edge goes whole to the next line instead of being hyphenated
+    /// (0: hyphenate wherever it fits).
+    pub zone: f64,
+    /// Hyphenate Capitalized Words: off, a word starting with a capital letter never breaks.
+    pub capitalized: bool,
+}
+
+impl Default for Hyphenation {
+    /// The values VectorCraft hyphenated with before the dialog: words of six letters or more,
+    /// three letters either side of the hyphen, no limit, no zone, capitalized words too.
+    fn default() -> Self {
+        Self { min_word: 6, after_first: 3, before_last: 3, hyphen_limit: 0, zone: 0.0, capitalized: true }
+    }
+}
+
+impl Hyphenation {
+    /// Limits of the dialog's fields: letters, hyphen limit, zone (points).
+    pub const LETTERS: (u32, u32) = (1, 25);
+    pub const LIMIT: (u32, u32) = (0, 25);
+    pub const ZONE: (f64, f64) = (0.0, 1296.0);
+
+    /// The options with every value inside its field's limits (files and commands are untrusted).
+    pub fn clamped(&self) -> Self {
+        let letters = |v: u32| v.clamp(Self::LETTERS.0, Self::LETTERS.1);
+        Self {
+            min_word: letters(self.min_word),
+            after_first: letters(self.after_first),
+            before_last: letters(self.before_last),
+            hyphen_limit: self.hyphen_limit.clamp(Self::LIMIT.0, Self::LIMIT.1),
+            zone: if self.zone.is_finite() { self.zone.clamp(Self::ZONE.0, Self::ZONE.1) } else { 0.0 },
+            capitalized: self.capitalized,
+        }
+    }
+}
+
+/// A Minimum / Desired / Maximum triple of the Justification dialog, in percent.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpacingRange {
+    pub min: f64,
+    pub desired: f64,
+    pub max: f64,
+}
+
+impl SpacingRange {
+    pub const fn new(min: f64, desired: f64, max: f64) -> Self {
+        Self { min, desired, max }
+    }
+
+    /// Inside `limits` and ordered min ≤ desired ≤ max (a non-finite value takes `fallback`'s).
+    pub fn clamped(&self, limits: (f64, f64), fallback: SpacingRange) -> Self {
+        let c = |v: f64, f: f64| if v.is_finite() { v.clamp(limits.0, limits.1) } else { f };
+        let desired = c(self.desired, fallback.desired);
+        Self { min: c(self.min, fallback.min).min(desired), desired, max: c(self.max, fallback.max).max(desired) }
+    }
+}
+
+/// How a justified line holding a single word is set (Justification › Single Word Justification).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SingleWordJustify {
+    /// Spread across the line: letter spacing and glyph scaling within their limits, then evenly
+    /// between the letters.
+    #[default]
+    FullJustify,
+    AlignLeft,
+    AlignCenter,
+    AlignRight,
+}
+
+/// Paragraph panel menu › Justification… ("Adjust word and letterspacing in justified text",
+/// <https://helpx.adobe.com/illustrator/desktop/design-with-text/edit-format-text/adjust-word-and-letterspacing-in-justified-text.html>).
+/// The Desired values set every paragraph's spacing; Minimum and Maximum bound how far justified
+/// lines may shrink or stretch.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Justification {
+    /// Word Spacing, % of the space character's width (0–1000; 100: the font's space).
+    pub word_spacing: SpacingRange,
+    /// Letter Spacing, % of a space added between letters (−100–500; 0: none added).
+    pub letter_spacing: SpacingRange,
+    /// Glyph Scaling, % of each character's width (50–200).
+    pub glyph_scaling: SpacingRange,
+    /// Auto Leading, % of the type size (0–500): the leading of characters whose leading is Auto.
+    pub auto_leading: f64,
+    /// Single Word Justification.
+    pub single_word: SingleWordJustify,
+}
+
+impl Default for Justification {
+    /// Word spacing 80/100/150 % (the shrink and stretch VectorCraft's composer used before the
+    /// dialog), letter spacing 0/0/0 %, glyph scaling 100/100/100 %, auto leading 120 % (helpx:
+    /// "the default auto-leading option sets the leading at 120% of the typeface size").
+    fn default() -> Self {
+        Self {
+            word_spacing: Self::WORD_DEFAULT,
+            letter_spacing: Self::LETTER_DEFAULT,
+            glyph_scaling: Self::GLYPH_DEFAULT,
+            auto_leading: Self::AUTO_LEADING_DEFAULT,
+            single_word: SingleWordJustify::FullJustify,
+        }
+    }
+}
+
+impl Justification {
+    pub const WORD_DEFAULT: SpacingRange = SpacingRange::new(80.0, 100.0, 150.0);
+    pub const LETTER_DEFAULT: SpacingRange = SpacingRange::new(0.0, 0.0, 0.0);
+    pub const GLYPH_DEFAULT: SpacingRange = SpacingRange::new(100.0, 100.0, 100.0);
+    pub const AUTO_LEADING_DEFAULT: f64 = 120.0;
+    /// The ranges helpx gives for each field.
+    pub const WORD_LIMITS: (f64, f64) = (0.0, 1000.0);
+    pub const LETTER_LIMITS: (f64, f64) = (-100.0, 500.0);
+    pub const GLYPH_LIMITS: (f64, f64) = (50.0, 200.0);
+    pub const AUTO_LEADING_LIMITS: (f64, f64) = (0.0, 500.0);
+
+    /// The options with every value inside its documented range and each triple ordered.
+    pub fn clamped(&self) -> Self {
+        Self {
+            word_spacing: self.word_spacing.clamped(Self::WORD_LIMITS, Self::WORD_DEFAULT),
+            letter_spacing: self.letter_spacing.clamped(Self::LETTER_LIMITS, Self::LETTER_DEFAULT),
+            glyph_scaling: self.glyph_scaling.clamped(Self::GLYPH_LIMITS, Self::GLYPH_DEFAULT),
+            auto_leading: if self.auto_leading.is_finite() {
+                self.auto_leading.clamp(Self::AUTO_LEADING_LIMITS.0, Self::AUTO_LEADING_LIMITS.1)
+            } else {
+                Self::AUTO_LEADING_DEFAULT
+            },
+            single_word: self.single_word,
+        }
+    }
+
+    /// The leading of `size`-point type whose leading is Auto.
+    pub fn auto_leading_for(&self, size: f64) -> f64 {
+        size * self.auto_leading / 100.0
     }
 }
 

@@ -5,13 +5,15 @@ use std::ops::Range;
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, Vec2};
 use unicode_bidi::{BidiInfo, Level};
 use vectorcraft_doc::{
-    Burasagari, CharStyle, InlineArt, Justify, Kinsoku, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathAlign, PathEffect, TextKind, TextObject,
+    Burasagari, CharStyle, Hyphenation, InlineArt, Justification, Justify, Kinsoku, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathAlign,
+    PathEffect, TextKind, TextObject,
 };
 use vectorcraft_geom::{ArcPath, PathData};
 
 use crate::composer::{Breakpoint, Params, compose};
 use crate::fontdb::FontDb;
-use crate::hyphen::hyphen_points;
+use crate::hyphen::hyphen_points_with;
+use crate::justify;
 use crate::shape::{
     Punct, SGlyph, Tcy, cap_x_heights, hyphen_glyph, is_cjk, no_line_end, no_line_start, punct, shape_range, soft_line_start, style_metrics,
 };
@@ -1055,9 +1057,30 @@ fn tab_advance(tabs: &[vectorcraft_doc::TabStop], origin: f64, x: f64, rest: &[S
     (at - rel).max(0.0)
 }
 
+/// How the single-line composer breaks a line of a paragraph.
+#[derive(Clone, Copy, Debug)]
+struct LineRules<'a> {
+    /// Automatic hyphenation is on, and the Hyphen Limit allows another hyphen on this line.
+    hyphenate: bool,
+    hyphenation: &'a Hyphenation,
+    /// Hyphenation Zone (points; 0: none): applies with the Single-line Composer only.
+    zone: f64,
+    burasagari: Burasagari,
+    kinsoku: Kinsoku,
+}
+
+impl<'a> LineRules<'a> {
+    fn of(para: &'a ParaStyle) -> Self {
+        Self { hyphenate: para.hyphenate, hyphenation: &para.hyphenation, zone: 0.0, burasagari: para.burasagari, kinsoku: para.kinsoku }
+    }
+}
+
 /// Greedy break: returns (end glyph index, hyphenated) for a line starting at `i` of `width`.
 /// With burasagari, a comma or full stop that doesn't fit ends the line, hanging outside it.
-fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool, burasagari: Burasagari, kinsoku: Kinsoku) -> (usize, bool) {
+/// With a Hyphenation Zone, a word that overflows is hyphenated only when the line couldn't end
+/// before it outside the zone (the last `zone` points of the line).
+fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, rules: &LineRules<'_>) -> (usize, bool) {
+    let LineRules { hyphenate, hyphenation, zone, burasagari, kinsoku } = *rules;
     if !width.is_finite() {
         return (g.len(), false);
     }
@@ -1100,13 +1123,22 @@ fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, hyphenate: bool, b
     }
     // Hyphenate the word that overflows.
     let word_start = last_break.map_or(i, |b| b.0);
-    if hyphenate && g[j].is_letter() {
+    // Hyphenation Zone: the line can already end inside the zone, before the word.
+    let in_zone = zone > 0.0 && last_break.is_some_and(|b| b.0 > i) && {
+        let mut e = word_start;
+        while e > i && g.get(e - 1).is_some_and(SGlyph::is_space) {
+            e -= 1;
+        }
+        width - g.get(i..e).map_or(0.0, |s| s.iter().map(|g| g.adv).sum::<f64>()) <= zone + EPS
+    };
+    if hyphenate && !in_zone && g[j].is_letter() {
         let mut we = j;
         while we < g.len() && !g[we].is_space() && !g[we].break_after() {
             we += 1;
         }
         let x_ws: f64 = g[i..word_start].iter().map(|g| g.adv).sum();
-        let pts: Vec<usize> = hyphen_breaks(text, g, word_start, we).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1, kinsoku)).collect();
+        let pts: Vec<usize> =
+            hyphen_breaks(text, g, word_start, we, hyphenation).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1, kinsoku)).collect();
         for &k in pts.iter().rev() {
             if k <= j && k > i {
                 let w = x_ws + g[word_start..k].iter().map(|g| g.adv).sum::<f64>() + hyphen_glyph(&g[k - 1]).adv;
@@ -1154,6 +1186,10 @@ fn kinsoku_between(before: char, after: Option<char>, kinsoku: Kinsoku) -> bool 
 mod wrapping_tests {
     use super::*;
     use std::sync::Arc;
+
+    fn test_rules(h: &Hyphenation) -> LineRules<'_> {
+        LineRules { hyphenate: false, hyphenation: h, zone: 0.0, burasagari: Burasagari::None, kinsoku: Kinsoku::Hard }
+    }
 
     fn synthetic_glyphs(specs: &[(usize, usize, f64, char)]) -> Vec<SGlyph> {
         // The face is only a required SGlyph field here; advances and cluster boundaries below are
@@ -1203,7 +1239,7 @@ mod wrapping_tests {
         let text = "بَت";
         let glyphs = synthetic_glyphs(&[(0, 4, 2.0, 'ب'), (0, 4, 2.0, 'ب'), (4, 2, 1.0, 'ت')]);
 
-        let (end, hyphenated) = break_line(text, &glyphs, 0, 3.0, false, Burasagari::None, Kinsoku::Hard);
+        let (end, hyphenated) = break_line(text, &glyphs, 0, 3.0, &test_rules(&Hyphenation::default()));
 
         assert!(!hyphenated);
         assert_eq!(end, 2, "oversized base-plus-mark cluster must stay together");
@@ -1216,11 +1252,11 @@ mod wrapping_tests {
         let text = "بَتَث";
         let glyphs = synthetic_glyphs(&[(0, 4, 1.0, 'ب'), (4, 4, 2.0, 'ت'), (4, 4, 2.0, 'ت'), (8, 2, 1.0, 'ث')]);
 
-        let (first_end, _) = break_line(text, &glyphs, 0, 3.0, false, Burasagari::None, Kinsoku::Hard);
+        let (first_end, _) = break_line(text, &glyphs, 0, 3.0, &test_rules(&Hyphenation::default()));
         assert_eq!(first_end, 1);
         assert_eq!(source_range(&glyphs, 0, first_end), 0..4);
 
-        let (second_end, hyphenated) = break_line(text, &glyphs, first_end, 3.0, false, Burasagari::None, Kinsoku::Hard);
+        let (second_end, hyphenated) = break_line(text, &glyphs, first_end, 3.0, &test_rules(&Hyphenation::default()));
 
         assert!(!hyphenated);
         assert_eq!(second_end, 3, "oversized cluster at the next line start must stay together");
@@ -1310,7 +1346,7 @@ fn soft_kinsoku_lets_small_kana_and_the_prolonged_sound_mark_start_a_line() {
 }
 
 /// Glyph indices inside `g[ws..we]` (a word) where a hyphenated break may go.
-fn hyphen_breaks(text: &str, g: &[SGlyph], ws: usize, we: usize) -> Vec<usize> {
+fn hyphen_breaks(text: &str, g: &[SGlyph], ws: usize, we: usize, opts: &Hyphenation) -> Vec<usize> {
     // Strip leading/trailing punctuation (quotes, commas).
     let (mut a, mut b) = (ws, we);
     while a < b && !g[a].is_letter() {
@@ -1325,7 +1361,7 @@ fn hyphen_breaks(text: &str, g: &[SGlyph], ws: usize, we: usize) -> Vec<usize> {
     let (s, e) = (g[a].byte, g[b - 1].byte + g[b - 1].len);
     let Some(word) = text.get(s..e) else { return vec![] };
     let offs: Vec<usize> = word.char_indices().map(|(o, _)| s + o).collect();
-    hyphen_points(word)
+    hyphen_points_with(word, opts)
         .into_iter()
         .filter_map(|ci| {
             let byte = *offs.get(ci)?;
@@ -1336,27 +1372,27 @@ fn hyphen_breaks(text: &str, g: &[SGlyph], ws: usize, we: usize) -> Vec<usize> {
 }
 
 /// Break candidates for the every-line composer.
-fn candidates(text: &str, g: &[SGlyph], hyphenate: bool, kinsoku: Kinsoku) -> Vec<Breakpoint> {
+fn candidates(text: &str, g: &[SGlyph], hyphenate: bool, opts: &Hyphenation, kinsoku: Kinsoku) -> Vec<Breakpoint> {
     let mut v = vec![];
     let mut ws = 0;
     for (j, gl) in g.iter().enumerate() {
         let end_of_word = gl.is_space() || gl.break_after();
         if end_of_word {
             if hyphenate && j > ws {
-                for k in hyphen_breaks(text, g, ws, j).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1, kinsoku)) {
-                    v.push(Breakpoint { end: k, hyphen: hyphen_glyph(&g[k - 1]).adv });
+                for k in hyphen_breaks(text, g, ws, j, opts).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1, kinsoku)) {
+                    v.push(Breakpoint { end: k, hyphen: hyphen_glyph(&g[k - 1]).adv, auto: true });
                 }
             }
             let hy = if gl.is_soft_hyphen() { hyphen_glyph(gl).adv } else { 0.0 };
             if j + 1 < g.len() && g[j + 1].byte != gl.byte && kinsoku_allows(g, j, kinsoku) {
-                v.push(Breakpoint { end: j + 1, hyphen: hy });
+                v.push(Breakpoint { end: j + 1, hyphen: hy, auto: false });
             }
             ws = j + 1;
         }
     }
     if hyphenate && g.len() > ws {
-        for k in hyphen_breaks(text, g, ws, g.len()).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1, kinsoku)) {
-            v.push(Breakpoint { end: k, hyphen: hyphen_glyph(&g[k - 1]).adv });
+        for k in hyphen_breaks(text, g, ws, g.len(), opts).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1, kinsoku)) {
+            v.push(Breakpoint { end: k, hyphen: hyphen_glyph(&g[k - 1]).adv, auto: true });
         }
     }
     v.sort_by_key(|b| b.end);
@@ -1364,12 +1400,34 @@ fn candidates(text: &str, g: &[SGlyph], hyphenate: bool, kinsoku: Kinsoku) -> Ve
     v
 }
 
+/// The leading of `size`-point characters whose leading is Auto under the paragraph's
+/// Justification › Auto Leading; `fallback` (the font's own) when Auto Leading is the default
+/// 120 %.
+fn auto_leading(para: &ParaStyle, size: f64, fallback: f64) -> f64 {
+    let j = para.justification.clamped();
+    if j.auto_leading == Justification::AUTO_LEADING_DEFAULT {
+        return fallback;
+    }
+    let l = j.auto_leading_for(size);
+    if l.is_finite() { l } else { fallback }
+}
+
 /// Paragraphs longer than this (glyphs) are always broken line by line.
 const MAX_COMPOSE_GLYPHS: usize = 200_000;
 
 /// Every-line composition of paragraph glyphs `sg` if applicable (area text with uniform line
 /// metrics, justified or ragged); `None` falls back to the greedy single-line composer.
-fn compose_para(cx: &Ctx<'_>, sg: &[SGlyph], para: &ParaStyle, pen: &Pen<'_>, rtl: bool) -> Option<Vec<(usize, bool)>> {
+/// `justification` is the paragraph's (the defaults in vertical type), `units` its glyphs'
+/// letter-spacing units ([`justify::letter_units`]).
+fn compose_para(
+    cx: &Ctx<'_>,
+    sg: &[SGlyph],
+    para: &ParaStyle,
+    justification: &Justification,
+    units: &[f64],
+    pen: &Pen<'_>,
+    rtl: bool,
+) -> Option<Vec<(usize, bool)>> {
     let ragged = matches!(para.justify, Justify::Auto | Justify::Left | Justify::Center | Justify::Right);
     let composer = cx.opts.composer.unwrap_or(para.composer);
     // A paragraph whose commas or full stops may hang is composed line by line (as the Japanese
@@ -1404,9 +1462,11 @@ fn compose_para(cx: &Ctx<'_>, sg: &[SGlyph], para: &ParaStyle, pen: &Pen<'_>, rt
     let width = |k: usize| widths.get(k).copied().unwrap_or(last);
     // Lines from `uniform_from` on are interchangeable (same width).
     let uniform_from = widths.iter().rposition(|&w| (w - last).abs() > EPS).map_or(0, |k| k + 1);
-    let cands = candidates(cx.text, sg, para.hyphenate, para.kinsoku);
+    let cands = candidates(cx.text, sg, para.hyphenate, &para.hyphenation, para.kinsoku);
     let justify_last = para.justify == Justify::JustifyAll;
-    let params = |tolerance| Params { justify_last, ragged, tolerance, uniform_from };
+    let glue = justify::glue(justification);
+    let hyphen_limit = para.hyphenation.clamped().hyphen_limit as usize;
+    let params = |tolerance| Params { justify_last, ragged, tolerance, uniform_from, glue, hyphen_limit };
     // Ragged: first look for breaks that leave at most one rag zone (a sixth of the width) on
     // each line, then accept any lines that fit.
     let (strict, loose) = if ragged { (1.0, f64::INFINITY) } else { (1.0, 4.0) };
@@ -1416,7 +1476,7 @@ fn compose_para(cx: &Ctx<'_>, sg: &[SGlyph], para: &ParaStyle, pen: &Pen<'_>, rt
         let flush = !rtl && para.mojikumi == Mojikumi::LineEndHalf;
         sg.get(i).filter(|g| flush && g.lead <= 0.0).and_then(|g| punct_half(g, Punct::Opening)).unwrap_or(0.0)
     };
-    compose(sg, &width, &start_credit, &cands, &params(strict)).or_else(|| compose(sg, &width, &start_credit, &cands, &params(loose)))
+    compose(sg, &width, &start_credit, &cands, units, &params(strict)).or_else(|| compose(sg, &width, &start_credit, &cands, units, &params(loose)))
 }
 
 /// Flow paragraphs `paras` (byte ranges) of `t`, each with its own paragraph attributes
@@ -1452,13 +1512,37 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             let (cap, xh) = cap_x_heights(cx.db, st);
             let centre =
                 cx.db.face_version(&st.font_family, &st.font_style, st.font_version.as_deref()).map_or(EM_CENTER, |f| f.ideographic_centre());
+            // Justification › Auto Leading: characters whose leading is Auto take this percentage of
+            // their size.
+            let lead = if st.leading.is_none() { auto_leading(para, st.size, lead) } else { lead };
             Metrics { asc, desc, lead, cap, xh, top: (centre + 0.5) * st.size * st.v_scale / 100.0 }
         };
+        if para.justification.auto_leading != Justification::AUTO_LEADING_DEFAULT {
+            for g in &mut sg {
+                let st = cx.style_at(g.byte);
+                if st.leading.is_none() {
+                    g.leading = auto_leading(para, st.size, g.leading);
+                }
+            }
+        }
+        // Justification: the Desired spacing on every line, and the limits of justified lines
+        // (horizontal type; vertical type keeps the defaults).
+        let defaults = Justification::default();
+        let justification = if cx.vertical { &defaults } else { &para.justification };
+        let units = justify::letter_units(&sg, justification);
+        if justify::changes_spacing(justification) {
+            justify::apply_desired(&mut sg, justification, &units);
+        }
+        let glue = justify::glue(justification);
+        let hyphen_limit = para.hyphenation.clamped().hyphen_limit as usize;
+        // Consecutive lines so far ending in a hyphen (Hyphen Limit).
+        let mut hyphen_run = 0usize;
+        let composer = cx.opts.composer.unwrap_or(para.composer);
         if pi > 0 {
             pen.pending += para.space_before;
         }
         let n = sg.len();
-        let composed = compose_para(cx, &sg, para, &pen, rtl);
+        let composed = compose_para(cx, &sg, para, justification, &units, &pen, rtl);
         let mut li_para = 0;
         let mut i = 0;
         loop {
@@ -1488,7 +1572,15 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                 let width = x1 - x0 - ind_l - para.right_indent;
                 let (end, hyph) = match composed.as_ref().and_then(|c| c.get(li_para)) {
                     Some(&(e, h)) if e > i => (e, h),
-                    _ if i < n => break_line(cx.text, &sg, i, width, para.hyphenate, para.burasagari, para.kinsoku),
+                    _ if i < n => {
+                        let rules = LineRules {
+                            hyphenate: para.hyphenate && (hyphen_limit == 0 || hyphen_run < hyphen_limit),
+                            // Hyphenation Zone applies with the Single-line Composer only.
+                            zone: if composer == Composer::SingleLine { para.hyphenation.clamped().zone } else { 0.0 },
+                            ..LineRules::of(para)
+                        };
+                        break_line(cx.text, &sg, i, width, &rules)
+                    }
                     _ => (n, false),
                 };
                 let m = Metrics::max(&sg[i..end]).unwrap_or(pm);
@@ -1557,8 +1649,10 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                 Justify::JustifyRight => (2, !last_of_para),
                 Justify::JustifyAll => (0, true),
             };
-            let justify = justify && regions.is_some();
+            let mut justify = justify && regions.is_some();
+            let mut align = align;
             let (mut per_space, mut per_gap, mut per_cjk) = (0.0, 0.0, 0.0);
+            let (mut per_unit, mut glyph_scale) = (0.0, 1.0);
             let spaces = sg[i..body].iter().filter(|g| g.is_space()).count();
             // Japanese (and Chinese) lines are justified between their characters (JLREQ 3.8): the
             // gaps next to a CJK character, not inside a Latin word or a tate-chu-yoko block.
@@ -1570,20 +1664,34 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                         .is_some_and(|(a, b)| !a.is_space() && !b.is_space() && !b.continues_tcy() && a.ch != '\t' && (is_cjk(a.ch) || is_cjk(b.ch)))
             };
             let cjk_gaps = (i..body).filter(|&j| cjk_gap(j)).count();
+            // Single Word Justification: a justified line with no word space may be aligned
+            // instead of spread.
+            if justify
+                && spaces == 0
+                && cjk_gaps == 0
+                && let Some(a) = justify::single_word(justification)
+            {
+                (justify, align) = (false, a);
+            }
             if justify && (width - w).abs() > EPS {
                 if cjk_gaps > 0 && width > w {
                     // Spread over the CJK gaps and the word spaces alike.
                     let per = (width - w) / (cjk_gaps + spaces) as f64;
                     (per_space, per_cjk) = (per, per);
-                } else if spaces > 0 {
-                    // Composed lines may shrink word spaces (never below zero).
-                    per_space =
-                        ((width - w) / spaces as f64).max(-sg[i..body].iter().filter(|g| g.is_space()).map(|g| g.adv).fold(f64::MAX, f64::min));
-                } else if para.justify == Justify::JustifyAll && width > w {
-                    let gaps = sg.get(i + 1..body).map_or(0, |s| s.iter().filter(|g| !g.continues_tcy()).count());
-                    if gaps > 0 {
-                        per_gap = (width - w) / gaps as f64;
-                    }
+                } else {
+                    // Word spacing, letter spacing and glyph scaling within their limits, then the
+                    // word spaces (never below zero), or a single word's letters.
+                    let line = sg.get(i..body).unwrap_or_default();
+                    let stuff = justify::LineStuff {
+                        spaces,
+                        space_width: line.iter().filter(|g| g.is_space()).map(|g| g.adv).sum(),
+                        min_space: line.iter().filter(|g| g.is_space()).map(|g| g.adv).fold(f64::MAX, f64::min),
+                        units: (i..body.saturating_sub(1)).filter_map(|j| units.get(j)).sum(),
+                        chars: line.iter().filter(|g| justify::is_char(g)).map(|g| g.adv).sum(),
+                        gaps: sg.get(i + 1..body).map_or(0, |s| s.iter().filter(|g| !g.continues_tcy()).count()),
+                    };
+                    let f = justify::fill(width - w, &stuff, &glue, true);
+                    (per_space, per_gap, per_unit, glyph_scale) = (f.per_space, f.per_gap, f.per_unit, f.glyph_scale);
                 }
             }
             let start_x = if justify {
@@ -1619,6 +1727,16 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             for offset in order {
                 let j = i + offset;
                 let Some(g) = sg.get(j) else { continue };
+                // Glyph Scaling of a justified line.
+                let scaled;
+                let g = if glyph_scale != 1.0 && j < body && justify::is_char(g) {
+                    let mut c = g.clone();
+                    justify::scale_glyph(&mut c, glyph_scale);
+                    scaled = c;
+                    &scaled
+                } else {
+                    g
+                };
                 let mut adv = g.adv;
                 if j + 1 == trimmed {
                     adv -= end_trim;
@@ -1626,6 +1744,10 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                 if g.ch == '\t' {
                     adv = tab_advance(&para.tabs, tab_origin, x, &sg[j + 1..trimmed.max(j + 1)]);
                 } else if j < body {
+                    if j + 1 < body {
+                        // Letter Spacing of a justified line.
+                        adv += per_unit * units.get(j).copied().unwrap_or(0.0);
+                    }
                     if g.is_space() {
                         adv += per_space;
                     } else if per_cjk != 0.0 {
@@ -1669,6 +1791,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             for q in &mut pen.queued {
                 q.0 = baseline;
             }
+            hyphen_run = if hyph { hyphen_run + 1 } else { 0 };
             li_para += 1;
             i = end;
             if i >= n {

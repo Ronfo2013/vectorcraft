@@ -5,8 +5,11 @@
 //! (badness + penalty) demerits over the whole paragraph, plus a demerit when neighbouring lines
 //! fall in fitness classes more than one apart (a tight line next to a loose one).
 //!
-//! - **Justified** lines: word spacing may stretch to 150% and shrink to 80%; the badness comes
-//!   from the stretch/shrink ratio, so loose lines are traded for evenly spaced ones.
+//! - **Justified** lines: word spacing, letter spacing and glyph scaling may stretch to their
+//!   Justification Maximum and shrink to their Minimum ([`Glue`]; by default word spacing alone,
+//!   to 150% and 80%); the badness comes from the stretch/shrink ratio, so loose lines are traded
+//!   for evenly spaced ones.
+//! - **Hyphen Limit**: no more than that many consecutive lines end in an automatic hyphen.
 //! - **Ragged** lines (left/centre/right aligned): spaces keep their width, so a line never
 //!   shrinks (it must fit). The badness comes from the line's leftover space measured against a
 //!   rag zone of a sixth of the line width, so the rag is even rather than full lines followed by
@@ -15,8 +18,6 @@
 
 use crate::shape::SGlyph;
 
-const STRETCH: f64 = 0.5;
-const SHRINK: f64 = 0.2;
 const HYPHEN_PENALTY: f64 = 50.0;
 const DOUBLE_HYPHEN_DEMERITS: f64 = 3000.0;
 const LINE_PENALTY: f64 = 10.0;
@@ -42,6 +43,28 @@ const EPS: f64 = 1e-6;
 pub(crate) struct Breakpoint {
     pub end: usize,
     pub hyphen: f64,
+    /// An automatic hyphenation point (not a soft hyphen typed in the text): Hyphen Limit applies.
+    pub auto: bool,
+}
+
+/// How far a justified line's spacing may stretch and shrink (Justification Maximum − Desired and
+/// Desired − Minimum), as fractions: of each word space's width, of a space's width per letter
+/// gap ([`compose`]'s `units`), and of the characters' widths.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Glue {
+    pub word_stretch: f64,
+    pub word_shrink: f64,
+    pub letter_stretch: f64,
+    pub letter_shrink: f64,
+    pub glyph_stretch: f64,
+    pub glyph_shrink: f64,
+}
+
+impl Default for Glue {
+    /// Word spacing 80/100/150 %, letter spacing and glyph scaling fixed.
+    fn default() -> Self {
+        Self { word_stretch: 0.5, word_shrink: 0.2, letter_stretch: 0.0, letter_shrink: 0.0, glyph_stretch: 0.0, glyph_shrink: 0.0 }
+    }
 }
 
 /// How a paragraph is composed.
@@ -56,6 +79,11 @@ pub(crate) struct Params {
     /// Lines from this index on all have the same width, so their line numbers are interchangeable
     /// (keeps the number of active breakpoints small).
     pub uniform_from: usize,
+    /// Justified lines' stretch and shrink.
+    pub glue: Glue,
+    /// Hyphen Limit: the most consecutive lines ending in a hyphen before an automatic hyphen is
+    /// refused (0: no limit).
+    pub hyphen_limit: usize,
 }
 
 struct Node {
@@ -65,6 +93,8 @@ struct Node {
     fitness: u8,
     demerits: f64,
     hyphenated: bool,
+    /// Consecutive lines up to this break that end in a hyphen.
+    run: usize,
     prev: Option<usize>,
 }
 
@@ -85,7 +115,8 @@ fn fitness(r: f64, ragged: bool) -> u8 {
 /// Compose the paragraph `g` into lines. `width(k)` is the available width of line `k`;
 /// `start_credit(i)` is the width a wrapped line starting at glyph `i` gives back (Mojikumi sets
 /// an opening bracket there flush with the line's start); `cands` are the break opportunities
-/// in increasing order (the paragraph end is added).
+/// in increasing order (the paragraph end is added); `units[i]` is the width a letter gap after
+/// glyph `i` stretches or shrinks by per unit of letter spacing (a space's width; missing: 0).
 /// Returns `(end, hyphen)` per line, or `None` if no set of breaks fits within the tolerance
 /// (the caller then falls back to single-line breaking).
 pub(crate) fn compose(
@@ -93,22 +124,40 @@ pub(crate) fn compose(
     width: &dyn Fn(usize) -> f64,
     start_credit: &dyn Fn(usize) -> f64,
     cands: &[Breakpoint],
+    units: &[f64],
     p: &Params,
 ) -> Option<Vec<(usize, bool)>> {
     let n = g.len();
     if n == 0 {
         return Some(vec![]);
     }
-    // Prefix sums of advances and of space advances.
+    // Prefix sums of advances, of space advances, of letter-gap units and of the other glyphs'
+    // advances.
     let mut w = vec![0.0; n + 1];
     let mut sp = vec![0.0; n + 1];
+    let mut lu = vec![0.0; n + 1];
+    let mut cw = vec![0.0; n + 1];
     for (i, gl) in g.iter().enumerate() {
+        let space = gl.is_space();
         w[i + 1] = w[i] + gl.adv;
-        sp[i + 1] = sp[i] + if gl.is_space() { gl.adv } else { 0.0 };
+        sp[i + 1] = sp[i] + if space { gl.adv } else { 0.0 };
+        lu[i + 1] = lu[i] + if space { 0.0 } else { units.get(i).copied().filter(|u| u.is_finite()).unwrap_or(0.0) };
+        cw[i + 1] = cw[i] + if space { 0.0 } else { gl.adv };
     }
-    if !w[n].is_finite() {
+    if !w[n].is_finite() || !lu[n].is_finite() {
         return None;
     }
+    let glue = p.glue;
+    // How far line `a..t` may stretch and shrink (the last glyph has no letter gap after it).
+    let give = |a: usize, t: usize| {
+        let spaces = sp[t] - sp[a];
+        let letters = if t > a { lu[t - 1] - lu[a] } else { 0.0 };
+        let chars = cw[t] - cw[a];
+        (
+            spaces * glue.word_stretch + letters * glue.letter_stretch + chars * glue.glyph_stretch,
+            spaces * glue.word_shrink + letters * glue.letter_shrink + chars * glue.glyph_shrink,
+        )
+    };
     // Trailing spaces are dropped at a break.
     let trim = |mut b: usize, a: usize| {
         while b > a && g.get(b - 1).is_some_and(SGlyph::is_space) {
@@ -117,17 +166,19 @@ pub(crate) fn compose(
         b
     };
     let mut all: Vec<Breakpoint> = cands.iter().copied().filter(|c| c.end > 0 && c.end < n).collect();
-    all.push(Breakpoint { end: n, hyphen: 0.0 });
+    all.push(Breakpoint { end: n, hyphen: 0.0, auto: false });
     let (adj_demerits, hyphen_penalty) =
         if p.ragged { (ADJ_DEMERITS_RAGGED, HYPHEN_PENALTY_RAGGED) } else { (ADJ_DEMERITS_JUSTIFIED, HYPHEN_PENALTY) };
-    let mut nodes = vec![Node { pos: 0, line: 0, fitness: 1, demerits: 0.0, hyphenated: false, prev: None }];
+    let mut nodes = vec![Node { pos: 0, line: 0, fitness: 1, demerits: 0.0, hyphenated: false, run: 0, prev: None }];
     let mut active: Vec<usize> = vec![0];
     for bp in &all {
         let last = bp.end == n;
-        let mut best: Vec<(usize, u8, f64, usize)> = vec![]; // (line, fitness, demerits, from)
+        let mut best: Vec<(usize, u8, usize, f64, usize)> = vec![]; // (line, fitness, run, demerits, from)
         let mut keep = Vec::with_capacity(active.len());
         for &ai in &active {
             let Some(a) = nodes.get(ai) else { continue };
+            // Hyphen Limit: this line would be one too many in a row ending in a hyphen.
+            let refused = bp.auto && bp.hyphen > 0.0 && p.hyphen_limit > 0 && a.run >= p.hyphen_limit;
             let t = trim(bp.end, a.pos);
             let credit = if a.pos > 0 { start_credit(a.pos) } else { 0.0 };
             let natural = w[t] - w[a.pos] - credit + bp.hyphen;
@@ -144,17 +195,17 @@ pub(crate) fn compose(
                     (lw - natural).max(0.0) / (lw * RAG_ZONE).max(1.0)
                 }
             } else {
-                let spaces = sp[t] - sp[a.pos];
+                let (stretch, shrink) = give(a.pos, t);
                 if natural < lw {
                     if last && !p.justify_last {
                         0.0
-                    } else if spaces > 0.0 {
-                        (lw - natural) / (spaces * STRETCH)
+                    } else if stretch > 0.0 {
+                        (lw - natural) / stretch
                     } else {
                         f64::INFINITY
                     }
                 } else if natural > lw {
-                    if spaces > 0.0 { (lw - natural) / (spaces * SHRINK) } else { f64::NEG_INFINITY }
+                    if shrink > 0.0 { (lw - natural) / shrink } else { f64::NEG_INFINITY }
                 } else {
                     0.0
                 }
@@ -164,6 +215,9 @@ pub(crate) fn compose(
                 continue;
             }
             keep.push(ai);
+            if refused {
+                continue;
+            }
             let free_last = last && (p.ragged || !p.justify_last);
             if ratio > p.tolerance && !(last && (p.ragged || (ratio.is_infinite() && p.justify_last))) {
                 continue;
@@ -181,15 +235,19 @@ pub(crate) fn compose(
             }
             let total = a.demerits + d;
             let line = (a.line + 1).min(p.uniform_from);
-            match best.iter_mut().find(|b| b.0 == line && b.1 == fit) {
-                Some(b) if b.2 <= total => {}
-                Some(b) => *b = (line, fit, total, ai),
-                None => best.push((line, fit, total, ai)),
+            // With a Hyphen Limit, breaks after different runs of hyphens lead to different
+            // choices later, so they are kept apart.
+            let run = if bp.hyphen > 0.0 { a.run + 1 } else { 0 };
+            let key = if p.hyphen_limit > 0 { run.min(p.hyphen_limit) } else { 0 };
+            match best.iter_mut().find(|b| b.0 == line && b.1 == fit && b.2 == key) {
+                Some(b) if b.3 <= total => {}
+                Some(b) => *b = (line, fit, key, total, ai),
+                None => best.push((line, fit, key, total, ai)),
             }
         }
         active = keep;
-        for (line, fitness, demerits, from) in best {
-            nodes.push(Node { pos: bp.end, line, fitness, demerits, hyphenated: bp.hyphen > 0.0, prev: Some(from) });
+        for (line, fitness, run, demerits, from) in best {
+            nodes.push(Node { pos: bp.end, line, fitness, demerits, hyphenated: bp.hyphen > 0.0, run, prev: Some(from) });
             active.push(nodes.len() - 1);
         }
         if active.is_empty() || active.len() > MAX_ACTIVE {

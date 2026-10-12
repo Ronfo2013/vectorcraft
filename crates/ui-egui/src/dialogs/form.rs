@@ -368,6 +368,17 @@ pub(super) fn humanize(k: &str) -> String {
         "Include Cmy Blacks" => "Include Blacks with CMY:".into(),
         "Align To Path" => "Align to Path:".into(),
         "Create" => "Create New Fields by:".into(),
+        // Paragraph panel menu › Hyphenation… and Justification… (`text.hyphenation`,
+        // `text.justification`).
+        "Min Word" => "Words Longer Than:".into(),
+        "Zone" => "Hyphenation Zone:".into(),
+        "Capitalized" => "Hyphenate Capitalized Words".into(),
+        "Word Spacing Min" => "Word Spacing Minimum:".into(),
+        "Word Spacing Max" => "Word Spacing Maximum:".into(),
+        "Letter Spacing Min" => "Letter Spacing Minimum:".into(),
+        "Letter Spacing Max" => "Letter Spacing Maximum:".into(),
+        "Glyph Scaling Min" => "Glyph Scaling Minimum:".into(),
+        "Glyph Scaling Max" => "Glyph Scaling Maximum:".into(),
         _ => format!("{s}:"),
     }
 }

@@ -4148,3 +4148,25 @@ lighting	Light	ライト
 	Linux Display Server	Linux ディスプレイサーバー
 	X11 (XWayland)	X11 (XWayland)
 @msg	{PATCH} (over the size limit)	{PATCH}（サイズ上限を超過）
+	Justification	均等配置
+	Words Longer Than	指定文字数より長い単語
+	After First	区切り前の文字数
+	Before Last	区切り後の文字数
+	Hyphen Limit	ハイフンの連続数
+	Hyphenation Zone	ハイフネーション領域
+	Hyphenate Capitalized Words	大文字で始まる単語をハイフネーション
+	Word Spacing Minimum	単語間隔 最小
+	Word Spacing Desired	単語間隔 最適
+	Word Spacing Maximum	単語間隔 最大
+	Letter Spacing Minimum	文字間隔 最小
+	Letter Spacing Desired	文字間隔 最適
+	Letter Spacing Maximum	文字間隔 最大
+	Glyph Scaling Minimum	グリフの拡大・縮小 最小
+	Glyph Scaling Desired	グリフの拡大・縮小 最適
+	Glyph Scaling Maximum	グリフの拡大・縮小 最大
+	Auto Leading	自動行送り
+	Single Word Justification	1 単語の行の配置
+	Full Justify	両端揃え
+	Align Left	左揃え
+	Align Center	中央揃え
+	Align Right	右揃え

@@ -205,3 +205,108 @@ fn ranged_set_format_sets_direction_mojikumi_and_leading_model_per_paragraph() {
     s.execute("text.setFormat", &json!({"ids": [id], "direction": "auto"})).unwrap();
     assert!(text(&s, id).paragraph_styles().iter().all(|p| p.direction.is_none()));
 }
+
+/// Paragraph panel menu › Hyphenation…: `text.hyphenation` queries and sets the options per
+/// paragraph, validates them, and the layout follows (one undo step).
+#[test]
+fn hyphenation_options_through_the_command() {
+    let mut s = session();
+    let id = area(&mut s, "one\ntwo");
+    let q = s.execute("text.hyphenation", &json!({"ids": [id]})).unwrap();
+    assert_eq!(q, json!({"hyphenate": false, "minWord": 6, "afterFirst": 3, "beforeLast": 3, "hyphenLimit": 0, "zone": 0.0, "capitalized": true}));
+    s.execute(
+        "text.hyphenation",
+        &json!({"ids": [id], "hyphenate": true, "minWord": 8, "hyphenLimit": 2, "zone": 36, "capitalized": false, "start": 5, "end": 5}),
+    )
+    .unwrap();
+    let t = text(&s, id);
+    let ps = t.paragraph_styles();
+    assert_eq!(ps[0].hyphenation, vectorcraft_doc::Hyphenation::default(), "only the paragraph at the caret");
+    assert!(ps[1].hyphenate);
+    assert_eq!((ps[1].hyphenation.min_word, ps[1].hyphenation.hyphen_limit, ps[1].hyphenation.zone), (8, 2, 36.0));
+    assert!(!ps[1].hyphenation.capitalized);
+    let q = s.execute("text.hyphenation", &json!({"ids": [id], "start": 5})).unwrap();
+    assert_eq!(q["minWord"], json!(8));
+    assert_eq!(q["capitalized"], json!(false));
+    // Bad values are refused, nothing changes.
+    for bad in [
+        json!({"minWord": 0}),
+        json!({"minWord": 26}),
+        json!({"afterFirst": 2.5}),
+        json!({"zone": -1}),
+        json!({"zone": "far"}),
+        json!({"capitalized": 1}),
+        json!({"hyphenLimit": 99}),
+    ] {
+        let mut p = bad.clone();
+        p["ids"] = json!([id]);
+        assert!(s.execute("text.hyphenation", &p).is_err(), "{bad}");
+    }
+    assert_eq!(text(&s, id).paragraph_styles()[1].hyphenation.min_word, 8);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(text(&s, id).paragraph_styles()[1].hyphenation, vectorcraft_doc::Hyphenation::default());
+    // The layout uses them: no word of this copy is longer than 20 letters.
+    let copy = "Extraordinarily comprehensive typographical considerations notwithstanding everything.";
+    let id =
+        s.execute("text.create", &json!({"x": 10, "y": 10, "text": copy, "area": {"width": 120, "height": 500}})).unwrap()["id"].as_u64().unwrap();
+    s.execute("text.hyphenation", &json!({"ids": [id], "hyphenate": true})).unwrap();
+    let hyphens =
+        |s: &Session| vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &text(s, id)).glyphs.iter().filter(|g| g.len == 0).count();
+    assert!(hyphens(&s) > 0);
+    s.execute("text.hyphenation", &json!({"ids": [id], "minWord": 20})).unwrap();
+    assert_eq!(hyphens(&s), 0);
+}
+
+/// Paragraph panel menu › Justification…: `text.justification` queries and sets the options,
+/// keeps Minimum ≤ Desired ≤ Maximum, and the layout follows.
+#[test]
+fn justification_options_through_the_command() {
+    let mut s = session();
+    let id = area(&mut s, "spacing in type");
+    let q = s.execute("text.justification", &json!({"ids": [id]})).unwrap();
+    assert_eq!(q["wordSpacingMin"], json!(80.0));
+    assert_eq!(q["wordSpacingDesired"], json!(100.0));
+    assert_eq!(q["wordSpacingMax"], json!(150.0));
+    assert_eq!(q["letterSpacingMax"], json!(0.0));
+    assert_eq!(q["glyphScalingDesired"], json!(100.0));
+    assert_eq!(q["autoLeading"], json!(120.0));
+    assert_eq!(q["singleWordJustification"], json!("fullJustify"));
+    let width = |s: &Session| {
+        let l = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &text(s, id));
+        l.lines.iter().map(|li| li.x1 - li.x0).fold(0.0, f64::max)
+    };
+    let before = width(&s);
+    s.execute(
+        "text.justification",
+        &json!({"ids": [id], "letterSpacingDesired": 20, "glyphScalingMin": 90, "glyphScalingMax": 110, "autoLeading": 150, "singleWordJustification": "alignCenter"}),
+    )
+    .unwrap();
+    let j = text(&s, id).para.justification.clone();
+    assert_eq!(j.letter_spacing, vectorcraft_doc::SpacingRange::new(0.0, 20.0, 20.0), "a Desired above Maximum moves it");
+    assert_eq!(j.glyph_scaling, vectorcraft_doc::SpacingRange::new(90.0, 100.0, 110.0));
+    assert_eq!(j.auto_leading, 150.0);
+    assert_eq!(j.single_word, vectorcraft_doc::SingleWordJustify::AlignCenter);
+    assert!(width(&s) > before + 1.0, "letter spacing widens every line");
+    for bad in [
+        json!({"wordSpacingMax": 1001}),
+        json!({"letterSpacingMin": -101}),
+        json!({"glyphScalingDesired": 49}),
+        json!({"autoLeading": "auto"}),
+        json!({"singleWordJustification": "spread"}),
+        json!({"wordSpacingDesired": null, "glyphScalingMax": 201}),
+    ] {
+        let mut p = bad.clone();
+        p["ids"] = json!([id]);
+        assert!(s.execute("text.justification", &p).is_err(), "{bad}");
+    }
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(text(&s, id).para.justification, vectorcraft_doc::Justification::default());
+    // The options survive a save and reopen of the native format.
+    s.execute("text.justification", &json!({"ids": [id], "wordSpacingDesired": 120})).unwrap();
+    s.execute("text.hyphenation", &json!({"ids": [id], "afterFirst": 4})).unwrap();
+    let bytes = vectorcraft_format::save(&s.doc().unwrap().doc, false);
+    let back = vectorcraft_format::load(&bytes).unwrap();
+    let NodeKind::Text(t) = &back.node(NodeId(id)).unwrap().kind else { panic!("text") };
+    assert_eq!(t.para.justification.word_spacing.desired, 120.0);
+    assert_eq!(t.para.hyphenation.after_first, 4);
+}
