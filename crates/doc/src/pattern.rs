@@ -344,13 +344,7 @@ pub fn uses_pattern(n: &Node, name: Option<&str>) -> bool {
 /// Apply `m` to the pattern placement of every pattern paint of `n` (Transform Patterns).
 pub fn transform_pattern_paints(n: &mut Node, m: Affine) {
     for it in n.appearance.items.iter_mut() {
-        let p = match it {
-            AppearanceItem::Fill(f) => &mut f.paint,
-            AppearanceItem::Stroke(s) => &mut s.paint,
-        };
-        if let Paint::Pattern { xf, .. } = p {
-            *xf = m * *xf;
-        }
+        it.transform_pattern(m);
     }
 }
 

@@ -22,7 +22,7 @@ Part of [target-app-parity.md](target-app-parity.md); open work is in [gaps.md](
 |---|---|---:|---|
 | Convert to Shape | Rectangle, Rounded Rectangle, Ellipse | 3/3 | — |
 | Crop Marks | Crop Marks | 1/1 | — |
-| Distort & Transform | Free Distort, Pucker & Bloat, Roughen, Transform, Tweak, Twist, Zig Zag | 7/7 | — (Transform's Transform Objects, Transform Patterns and Scale Strokes & Effects options and its checkboxes landed, #885; Scale Strokes & Effects scales the stroke weights and dashes and the geometry effects after it, not the raster effects' distances) |
+| Distort & Transform | Free Distort, Pucker & Bloat, Roughen, Transform, Tweak, Twist, Zig Zag | 7/7 | — (Transform's Transform Objects, Transform Patterns and Scale Strokes & Effects options and its checkboxes landed, #885; Scale Strokes & Effects scales the stroke weights and dashes, copy k k times, and the distances of the geometry effects after it (object, fill and stroke lists, on paths, groups and type); the raster effects (shadows, glows, blur, feather) keep their distances) |
 | Path | Offset Path, Outline Object, Outline Stroke | 2/3 | Outline Object |
 | Pathfinder | Add, Intersect, Exclude, Subtract, Minus Back, Divide, Trim, Merge, Crop, Outline, Hard Mix, Soft Mix, Trap | 10/13 | Hard Mix, Soft Mix, Trap |
 | Rasterize | Rasterize… (as a live effect) | 0/1 | the live effect (Object › Rasterize exists) |

@@ -136,26 +136,40 @@ pub fn transforms_objects(p: &Value) -> bool {
     flag(p, "objects", true)
 }
 
-/// Transform effect: [`transform_affine`] applied to the geometry, then `copies` more times, each
-/// from the last (the copies are added to the result). Nothing with Transform Objects off.
-pub fn transform(path: &PathData, b: Rect, p: &Value, seed: u64) -> PathData {
+/// The pieces the Transform effect makes of `path`, each with how many times [`transform_affine`]
+/// applies to it (the power its stroke scale and pattern move take): without copies the path
+/// transformed once (`1`); with `copies`, the original (`0`) then each copy from the last (`1`, `2`,
+/// …), stopping before one reaches past [`MAX_REACH`]. With Transform Objects off the geometry
+/// stays (one piece, still `1`: the options for patterns and strokes apply once).
+pub fn transform_steps(path: &PathData, b: Rect, p: &Value, seed: u64) -> Vec<(PathData, u32)> {
     if !transforms_objects(p) {
-        return path.clone();
+        return vec![(path.clone(), 1)];
     }
     let m = transform_affine(b, p, seed);
-    let copies = num(p, "copies", 0.0).clamp(0.0, 1000.0) as usize;
+    let copies = num(p, "copies", 0.0).clamp(0.0, 1000.0) as u32;
     if copies == 0 {
-        return path.transformed(m);
+        return vec![(path.transformed(m), 1)];
     }
     let within = |r: Rect| [r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.abs() <= MAX_REACH);
-    let mut out = path.clone();
+    let mut out = vec![(path.clone(), 0)];
     let mut cur = path.clone();
-    for _ in 0..copies {
+    for k in 1..=copies {
         cur = cur.transformed(m);
         if !cur.bounds().is_some_and(within) {
             break;
         }
-        out.subpaths.extend(cur.subpaths.iter().cloned());
+        out.push((cur.clone(), k));
+    }
+    out
+}
+
+/// Transform effect: [`transform_affine`] applied to the geometry, then `copies` more times, each
+/// from the last (the copies are added to the result). Nothing with Transform Objects off.
+pub fn transform(path: &PathData, b: Rect, p: &Value, seed: u64) -> PathData {
+    let mut steps = transform_steps(path, b, p, seed).into_iter();
+    let Some((mut out, _)) = steps.next() else { return path.clone() };
+    for (piece, _) in steps {
+        out.subpaths.extend(piece.subpaths);
     }
     out
 }

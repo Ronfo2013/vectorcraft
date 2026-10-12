@@ -110,3 +110,71 @@ fn old_transform_effects_draw_as_before() {
     );
     assert!(entry["params"].as_str().unwrap().contains("Scale Strokes & Effects"));
 }
+
+/// A group's Transform effect with Scale Strokes & Effects scales its members' strokes (#885
+/// review): two 40 pt squares with 4 pt strokes halved as one piece about the group's centre;
+/// the first square's left edge lands at x = 75, where a 4 pt stroke covers x = 73 and a 2 pt one
+/// doesn't.
+#[test]
+fn a_group_transform_scales_its_members_strokes() {
+    for strokes in [false, true] {
+        let mut s = session();
+        for x in [50, 110] {
+            run(&mut s, "shape.rectangle", json!({"x": x, "y": 50, "width": 40, "height": 40}));
+            run(&mut s, "paint.setFill", json!({"none": true}));
+            run(&mut s, "paint.setStroke", json!({"color": "#000000"}));
+            run(&mut s, "stroke.set", json!({"weight": 4}));
+        }
+        run(&mut s, "select.all", json!({}));
+        run(&mut s, "object.group", json!({}));
+        run(&mut s, "effect.apply", json!({"effect": "distort.transform", "params": {"scaleH": 50, "scaleV": 50, "strokes": strokes}}));
+        let img = render(&s);
+        assert!(dark(img.pixel(75, 70)), "strokes={strokes}: the moved edge is stroked");
+        assert_eq!(dark(img.pixel(73, 70)), !strokes, "strokes={strokes}: a 4 pt stroke reaches x = 73, a 2 pt one doesn't");
+        assert!(!dark(img.pixel(50, 70)), "strokes={strokes}: the original edge is gone");
+    }
+}
+
+/// The canvas and Expand Appearance (what export bakes) paint copies with scaled strokes alike
+/// (#885 review): a 2 pt stroke, 150 % per copy, two copies, then an Outline Stroke on the
+/// stroke's own effects.
+#[test]
+fn live_copies_and_their_expanded_art_paint_alike() {
+    let mut s = session();
+    let id = NodeId(run(&mut s, "shape.rectangle", json!({"x": 20, "y": 20, "width": 30, "height": 30}))["id"].as_u64().unwrap());
+    run(&mut s, "paint.setFill", json!({"none": true}));
+    run(&mut s, "paint.setStroke", json!({"color": "#000000"}));
+    run(&mut s, "stroke.set", json!({"weight": 2}));
+    run(
+        &mut s,
+        "effect.apply",
+        json!({"effect": "distort.transform", "params": {"scaleH": 150, "scaleV": 150, "moveH": 30, "moveV": 30, "copies": 2, "reference": 0, "strokes": true}}),
+    );
+    let live = render(&s);
+    // The copies' strokes are 2, 3 and 4.5 pt: the last copy's edge at (20 + 30·2.5, …) is wider.
+    run(&mut s, "effect.expandAppearance", json!({}));
+    let expanded = render(&s);
+    let differ = live.pixels.chunks(4).zip(expanded.pixels.chunks(4)).filter(|(a, b)| a.iter().zip(*b).any(|(x, y)| x.abs_diff(*y) > 96)).count();
+    let inked = live.pixels.chunks(4).filter(|p| p[0] < 128).count();
+    assert!(inked > 500, "{inked} dark pixels");
+    assert!(differ * 50 < inked, "{differ} of {inked} pixels differ");
+    assert!(node(&s, id).children().is_some_and(|c| c.len() >= 3), "one piece per copy");
+}
+
+/// A stroke's own Transform effect scaling it up, with a raster effect on the stroke, draws the
+/// whole enlarged stroke (#885 review: the raster layer's reach used the unscaled weight). A 20 pt
+/// square's 4 pt stroke tripled about its centre: the outer edge of the 12 pt stroke is at x = 64.
+#[test]
+fn an_enlarged_stroke_with_a_raster_effect_is_not_clipped() {
+    let mut s = session();
+    let id = NodeId(run(&mut s, "shape.rectangle", json!({"x": 90, "y": 90, "width": 20, "height": 20}))["id"].as_u64().unwrap());
+    run(&mut s, "paint.setFill", json!({"none": true}));
+    run(&mut s, "paint.setStroke", json!({"color": "#000000"}));
+    run(&mut s, "stroke.set", json!({"weight": 4}));
+    let stroke = node(&s, id).appearance.items.iter().position(|i| !i.is_fill()).unwrap();
+    run(&mut s, "effect.apply", json!({"effect": "distort.transform", "item": stroke, "params": {"scaleH": 300, "scaleV": 300, "strokes": true}}));
+    run(&mut s, "effect.apply", json!({"effect": "stylize.dropShadow", "item": stroke, "params": {"x": 60, "y": 60, "blur": 0}}));
+    let img = render(&s);
+    assert!(dark(img.pixel(65, 100)), "the outer part of the 12 pt stroke");
+    assert!(dark(img.pixel(69, 100)), "its inner part");
+}

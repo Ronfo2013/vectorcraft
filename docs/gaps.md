@@ -117,14 +117,17 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
   the frame it lets go, so what the release commits is where the pointer let go.
   The Transform effect (#885): Transform Objects, Transform Patterns and Scale Strokes & Effects as effect parameters
   (`objects`, `patterns`, `strokes`; old files unchanged), drawn live (stroke weights and dashes scale by √|scaleH·scaleV|,
-  pattern paints follow the effect's transformation, the geometry stays with Transform Objects off), baked by Expand
-  Appearance, in the dialog as checkboxes beside Reflect X/Y, the reference locator, Random and Copies. The "invisible"
+  pattern paints follow the effect's transformation, with copies the original keeping its own and copy k taking them k
+  times; the geometry stays with Transform Objects off; Outline Stroke and the other geometry effects after it, in the
+  object's list and in its fills' and strokes', take the scaled weight and distances), on paths, groups, layers and type
+  alike, baked the same way by Expand Appearance and export, in the dialog as checkboxes beside Reflect X/Y, the
+  reference locator, Random and Copies. The "invisible"
   checkboxes measured: an unchecked box was drawn, but its `button_border` outline sat at 1.6:1 against the Medium Dark
   panel (1.6–2.5:1 across the four brightnesses, under the 3:1 a control's outline needs); every checkbox and radio at
   rest now outlines in `text_dim` (3.5–7.6:1), with headless frame tests for the contrast in each brightness and for
   each Options box being painted beside its label inside the dialog's clip.
 - **Missing:** Shape Builder on the reporter's own file (#937, until confirmed on it); the Transform effect's Scale Strokes
-  & Effects doesn't scale the distances of raster effects (Drop Shadow, glows) applied after it;
+  & Effects doesn't scale the distances of raster effects (shadows, glows, blur, feather) after it, which keep theirs;
   PDF text boxes moving on open (#722).
 - **Impact:** wrong output in everyday work.
 - **Estimate:** 8–15 h.

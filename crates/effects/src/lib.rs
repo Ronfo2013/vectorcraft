@@ -56,7 +56,7 @@ mod tests_scale;
 use serde_json::{Map, Value, json};
 use vectorcraft_doc::color::Paint;
 use vectorcraft_doc::{AppearanceItem, Effect, Node, NodeKind, StrokeLayer};
-use vectorcraft_geom::{Affine, BezPath, FillRule, PathData, Rect};
+use vectorcraft_geom::{Affine, FillRule, PathData, Rect};
 
 /// The Transform effect (Effect › Distort & Transform › Transform), whose Transform Objects,
 /// Transform Patterns and Scale Strokes & Effects options reach past the geometry
@@ -241,7 +241,7 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
             "distort.transform",
             "Transform…",
             DT,
-            "{scaleH: % (100), scaleV: % (100), moveH: pt (0; right = +), moveV: pt (0; down = +), rotate: deg (0; counter-clockwise), copies: 0..1000 (0; each copy transforms the last again), reflectX: bool (false; flips left to right), reflectY: bool (false; flips top to bottom), reference: 0..8 (4; the point of the bounds' 9-point grid it scales, rotates and reflects about: 0 top left, 4 centre, 8 bottom right), random: bool (false; each scale goes a random share of the way from 100 % to its value, each move and the angle a random share of theirs, differently for each object and the same on every redraw), objects: bool (true; Transform Objects: off, the geometry stays and only the patterns and strokes follow the options below), patterns: bool (false; Transform Patterns: the pattern fills and strokes transform along), strokes: bool (false; Scale Strokes & Effects: the stroke weights and dashes and the distances of the effects after this one scale by the uniform scale factor √|scaleH·scaleV|)}",
+            "{scaleH: % (100), scaleV: % (100), moveH: pt (0; right = +), moveV: pt (0; down = +), rotate: deg (0; counter-clockwise), copies: 0..1000 (0; each copy transforms the last again), reflectX: bool (false; flips left to right), reflectY: bool (false; flips top to bottom), reference: 0..8 (4; the point of the bounds' 9-point grid it scales, rotates and reflects about: 0 top left, 4 centre, 8 bottom right), random: bool (false; each scale goes a random share of the way from 100 % to its value, each move and the angle a random share of theirs, differently for each object and the same on every redraw), objects: bool (true; Transform Objects: off, the geometry stays and only the patterns and strokes follow the options below), patterns: bool (false; Transform Patterns: the pattern fills and strokes transform along; with copies the original keeps its pattern and copy k takes the transformation k times), strokes: bool (false; Scale Strokes & Effects: the stroke weights and dashes, and the distances of the geometry effects after this one in the object's list and in its fills' and strokes' lists, scale by the uniform scale factor √|scaleH·scaleV|, copy k by its k-th power; raster effects (shadows, glows, blur, feather) keep their distances)}",
             json!({"scaleH": 100.0, "scaleV": 100.0, "moveH": 0.0, "moveV": 0.0, "rotate": 0.0, "copies": 0, "reflectX": false, "reflectY": false, "reference": 4, "random": false, "objects": true, "patterns": false, "strokes": false}),
         ),
         g(
@@ -677,7 +677,7 @@ pub fn has_geometry(effects: &[Effect]) -> bool {
 }
 
 /// Context the geometry effects may need from the object's appearance.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GeomContext<'a> {
     /// The stroke `path.outlineStroke` outlines (its weight, caps, joins, dashes, alignment,
     /// profile and arrowheads): the stroke the effect sits on, else the object's top painted
@@ -688,6 +688,15 @@ pub struct GeomContext<'a> {
     /// The seed of the Transform effect's Random: the object's id, so each object varies its own
     /// way and keeps its result on every redraw.
     pub seed: u64,
+    /// How much the Transform effects before this one scaled the strokes (Scale Strokes &
+    /// Effects, see [`Piece`]): `path.outlineStroke` outlines the stroke scaled by it. 1 by default.
+    pub stroke_scale: f64,
+}
+
+impl Default for GeomContext<'_> {
+    fn default() -> Self {
+        Self { stroke: None, rule: FillRule::default(), seed: 0, stroke_scale: 1.0 }
+    }
 }
 
 impl<'a> GeomContext<'a> {
@@ -697,11 +706,11 @@ impl<'a> GeomContext<'a> {
             NodeKind::Path { rule, .. } | NodeKind::Compound { rule, .. } => *rule,
             _ => FillRule::NonZero,
         };
-        Self { stroke: n.appearance.stroke().filter(|s| !s.paint.is_none() && s.width > 0.0), rule, seed: n.id.0 }
+        Self { stroke: n.appearance.stroke().filter(|s| !s.paint.is_none() && s.width > 0.0), rule, seed: n.id.0, stroke_scale: 1.0 }
     }
 
     /// The context of the effects on `item`, one of the same object's appearance items: a
-    /// stroke's own effects outline that stroke.
+    /// stroke's own effects outline that stroke (scaled as its piece says, see [`Piece`]).
     pub fn item(self, item: &'a AppearanceItem) -> Self {
         match item {
             AppearanceItem::Stroke(s) => Self { stroke: Some(s), ..self },
@@ -719,105 +728,182 @@ pub fn apply_geometry(effects: &[Effect], path: &PathData, bounds: Rect) -> Path
 
 /// [`apply_geometry`] with an explicit [`GeomContext`].
 pub fn apply_geometry_with(effects: &[Effect], path: &PathData, bounds: Rect, ctx: &GeomContext) -> PathData {
-    apply_geometry_full(effects, path, bounds, ctx).path
+    apply_geometry_full(effects, path, bounds, ctx).path()
 }
 
-/// What the geometry effects make of a path ([`apply_geometry_full`]): its reshaped geometry, and
-/// what the Transform effect's Scale Strokes & Effects and Transform Patterns options ask of the
-/// appearance that paints it.
+fn scaled(k: f64) -> bool {
+    (k - 1.0).abs() > 1e-9
+}
+
+/// Largest factor a stroke scales by through Transform effects (copies of copies stay finite).
+const MAX_STROKE_SCALE: f64 = 1.0e6;
+
+/// Part of what the geometry effects make of a path ([`Geometry`]): its geometry and what the
+/// Transform effects' Scale Strokes & Effects and Transform Patterns ask of the fills and strokes
+/// painting it. A Transform effect with copies makes one piece per copy: the original keeps its
+/// strokes and patterns, copy `k` takes the effect's scale and move `k` times.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Geometry {
-    /// The path after the effects.
+pub struct Piece {
     pub path: PathData,
-    /// The factor the strokes' weights (and dashes) scale by: the uniform scale factors (√|det|) of
-    /// the Transform effects with Scale Strokes & Effects on, multiplied; 1 without any.
+    /// The factor the strokes' weights and dashes scale by: the uniform scale factors (√|det|) of
+    /// the Transform effects with Scale Strokes & Effects on, once per time they applied; 1
+    /// without any. The distances of the geometry effects after them scale by it too.
     pub stroke_scale: f64,
     /// The transformation of the pattern fills and strokes, in document space: the Transform
-    /// effects with Transform Patterns on, composed; the identity without any.
+    /// effects with Transform Patterns on, composed once per time they applied; the identity
+    /// without any.
     pub pattern: Affine,
 }
 
+impl Piece {
+    /// `path` with nothing changed of its appearance.
+    pub fn plain(path: PathData) -> Self {
+        Self { path, stroke_scale: 1.0, pattern: Affine::IDENTITY }
+    }
+
+    /// What the piece changes of `item`: the stroke scale for a stroke, the pattern move for a
+    /// pattern paint (1 and the identity otherwise).
+    fn change_of(&self, item: &AppearanceItem) -> (f64, Affine) {
+        let k = if item.is_fill() { 1.0 } else { self.stroke_scale };
+        let m = if matches!(item.paint(), Paint::Pattern { .. }) { self.pattern } else { Affine::IDENTITY };
+        (k, m)
+    }
+
+    /// `item` as this piece paints it (its stroke scaled, its pattern moved); `None` when the
+    /// piece changes nothing of it.
+    pub fn adjusted_item(&self, item: &AppearanceItem) -> Option<AppearanceItem> {
+        let (k, m) = self.change_of(item);
+        if !scaled(k) && m == Affine::IDENTITY {
+            return None;
+        }
+        let mut it = item.clone();
+        it.scale_stroke(k);
+        it.transform_pattern(m);
+        Some(it)
+    }
+
+    /// Scale `n`'s strokes and move its pattern paints as this piece asks.
+    pub fn adjust_node(&self, n: &mut Node) {
+        if scaled(self.stroke_scale) {
+            n.appearance.scale_strokes(self.stroke_scale);
+        }
+        if self.pattern != Affine::IDENTITY {
+            vectorcraft_doc::pattern::transform_pattern_paints(n, self.pattern);
+        }
+    }
+}
+
+/// What the geometry effects make of a path ([`apply_geometry_full`]): one [`Piece`], or several
+/// when a Transform effect's copies scale strokes or move patterns differently.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Geometry {
+    pub pieces: Vec<Piece>,
+}
+
 impl Geometry {
-    /// Scale the stroke weights and move the pattern paints of every fill and stroke of `a` as
-    /// the Transform effects asked.
-    pub fn adjust_appearance(&self, a: &mut vectorcraft_doc::Appearance) {
-        for item in &mut a.items {
-            adjust_item(item, self.stroke_scale, self.pattern);
+    /// All the pieces' geometry as one path.
+    pub fn path(&self) -> PathData {
+        PathData::new(self.pieces.iter().flat_map(|p| p.path.subpaths.iter().cloned()).collect())
+    }
+
+    /// The largest factor a piece scales the strokes by (1 without pieces).
+    pub fn max_stroke_scale(&self) -> f64 {
+        self.pieces.iter().map(|p| p.stroke_scale).reduce(f64::max).unwrap_or(1.0)
+    }
+
+    /// The geometry `item` paints, as runs of pieces that change it alike, each with `item` as
+    /// painted there (`None`: as it is). One run when the pieces change nothing of it.
+    pub fn runs(&self, item: &AppearanceItem) -> Vec<(PathData, Option<AppearanceItem>)> {
+        let mut runs: Vec<(PathData, &Piece)> = vec![];
+        for p in &self.pieces {
+            match runs.iter_mut().find(|(_, q)| q.change_of(item) == p.change_of(item)) {
+                Some((path, _)) => path.subpaths.extend(p.path.subpaths.iter().cloned()),
+                None => runs.push((p.path.clone(), p)),
+            }
         }
+        runs.into_iter().map(|(path, p)| (path, p.adjusted_item(item))).collect()
     }
 }
 
-/// Would [`adjust_item`] change `item`: is it a stroke and `k` a scale, or a pattern paint and
-/// `m` a move?
-pub fn adjusts_item(item: &AppearanceItem, k: f64, m: Affine) -> bool {
-    (!item.is_fill() && (k - 1.0).abs() > 1e-9) || (m != Affine::IDENTITY && matches!(item.paint(), Paint::Pattern { .. }))
-}
-
-/// Scale `item`'s stroke weight and dashes by `k` and move its pattern paint by `m` (document
-/// space), as the Transform effects' Scale Strokes & Effects and Transform Patterns ask
-/// ([`Geometry`]).
-pub fn adjust_item(item: &mut AppearanceItem, k: f64, m: Affine) {
-    let paint = match item {
-        AppearanceItem::Fill(f) => &mut f.paint,
-        AppearanceItem::Stroke(s) => {
-            if (k - 1.0).abs() > 1e-9 {
-                s.width *= k;
-                if let Some(d) = &mut s.dash {
-                    d.scale(k);
-                }
-            }
-            &mut s.paint
+/// The pieces of `pieces` that change the appearance alike merged into one (in order of their
+/// first piece).
+fn merge_pieces(pieces: Vec<Piece>) -> Vec<Piece> {
+    let mut out: Vec<Piece> = vec![];
+    for p in pieces {
+        match out.iter_mut().find(|q| q.stroke_scale == p.stroke_scale && q.pattern == p.pattern) {
+            Some(q) => q.path.subpaths.extend(p.path.subpaths),
+            None => out.push(p),
         }
-    };
-    if m != Affine::IDENTITY
-        && let Paint::Pattern { xf, .. } = paint
-    {
-        *xf = m * *xf;
-    }
-}
-
-/// [`apply_geometry_with`], also telling how the Transform effects in the list change the
-/// appearance ([`Geometry`]). A Transform effect with Scale Strokes & Effects on also scales the
-/// distances of the effects after it in the list, as Object › Transform does to applied effects.
-pub fn apply_geometry_full(effects: &[Effect], path: &PathData, bounds: Rect, ctx: &GeomContext) -> Geometry {
-    let mut out = Geometry { path: path.clone(), stroke_scale: 1.0, pattern: Affine::IDENTITY };
-    let mut b = bounds;
-    let mut first = true;
-    for e in effects.iter().filter(|e| e.visible && is_geometry(&e.id)) {
-        if !first {
-            b = out.path.bounds().unwrap_or(b);
-        }
-        first = false;
-        if out.path.is_empty() {
-            break;
-        }
-        let p = if out.stroke_scale != 1.0 {
-            let mut scaled = e.clone();
-            scale_effect(&mut scaled, out.stroke_scale);
-            merged_params(&scaled.id, &scaled.params)
-        } else {
-            merged_params(&e.id, &e.params)
-        };
-        if e.id == TRANSFORM {
-            let m = distort::transform_affine(b, &p, ctx.seed);
-            if util::flag(&p, "patterns", false) {
-                out.pattern = m * out.pattern;
-            }
-            if util::flag(&p, "strokes", false) {
-                let k = m.determinant().abs().sqrt();
-                if k.is_finite() && k > 0.0 {
-                    out.stroke_scale *= k;
-                }
-            }
-        }
-        out.path = apply_one(&e.id, &p, &out.path, b, ctx);
     }
     out
 }
 
-/// Convenience wrapper on kurbo paths.
-pub fn apply_geometry_bez(effects: &[Effect], path: &BezPath, bounds: Rect, ctx: &GeomContext) -> BezPath {
-    apply_geometry_with(effects, &PathData::from_bezpath(path), bounds, ctx).to_bezpath()
+/// The bounds of all of `pieces`' geometry.
+pub(crate) fn pieces_bounds(pieces: &[Piece]) -> Option<Rect> {
+    pieces.iter().filter_map(|p| p.path.bounds()).reduce(|a, b| a.union(b))
+}
+
+/// Apply geometry effect `e` to each of `pieces` with reference box `b`: its distances scaled by
+/// each piece's stroke scale, a Transform effect with Scale Strokes & Effects or Transform Patterns
+/// on splitting each piece into the original and its copies ([`distort::transform_steps`]).
+pub(crate) fn step_pieces(e: &Effect, pieces: Vec<Piece>, b: Rect, ctx: &GeomContext) -> Vec<Piece> {
+    let mut out = vec![];
+    for piece in merge_pieces(pieces) {
+        let p = if scaled(piece.stroke_scale) {
+            let mut e = e.clone();
+            scale_effect(&mut e, piece.stroke_scale);
+            merged_params(&e.id, &e.params)
+        } else {
+            merged_params(&e.id, &e.params)
+        };
+        let (strokes, patterns) = (util::flag(&p, "strokes", false), util::flag(&p, "patterns", false));
+        if e.id == TRANSFORM && (strokes || patterns) {
+            let m = distort::transform_affine(b, &p, ctx.seed);
+            let det = m.determinant().abs().sqrt();
+            let k = if strokes && det.is_finite() && det > 0.0 { det } else { 1.0 };
+            let mp = if patterns { m } else { Affine::IDENTITY };
+            for (path, times) in distort::transform_steps(&piece.path, b, &p, ctx.seed) {
+                let (mut s, mut pm) = (piece.stroke_scale, piece.pattern);
+                for _ in 0..times {
+                    s = (s * k).min(MAX_STROKE_SCALE);
+                    pm = mp * pm;
+                }
+                out.push(Piece { path, stroke_scale: s, pattern: pm });
+            }
+        } else {
+            let pctx = GeomContext { stroke_scale: piece.stroke_scale, ..*ctx };
+            out.push(Piece { path: apply_one(&e.id, &p, &piece.path, b, &pctx), ..piece });
+        }
+    }
+    out
+}
+
+/// [`apply_geometry_with`], also telling how the Transform effects in the list change the
+/// appearance ([`Geometry`]). A Transform effect with Scale Strokes & Effects on also scales the
+/// distances of the geometry effects after it in the list, as Object › Transform does to applied
+/// effects (raster effects keep theirs).
+pub fn apply_geometry_full(effects: &[Effect], path: &PathData, bounds: Rect, ctx: &GeomContext) -> Geometry {
+    apply_geometry_pieces(effects, vec![Piece::plain(path.clone())], bounds, ctx)
+}
+
+/// [`apply_geometry_full`] on `pieces` (what the object's own effects made of it, for the effects
+/// of one of its fills or strokes): each piece's stroke scale and pattern move carry on, and its
+/// stroke scale scales these effects' distances too.
+pub fn apply_geometry_pieces(effects: &[Effect], pieces: Vec<Piece>, bounds: Rect, ctx: &GeomContext) -> Geometry {
+    let mut pieces = pieces;
+    let mut b = bounds;
+    let mut first = true;
+    for e in effects.iter().filter(|e| e.visible && is_geometry(&e.id)) {
+        if !first {
+            b = pieces_bounds(&pieces).unwrap_or(b);
+        }
+        first = false;
+        if pieces.iter().all(|p| p.path.is_empty()) {
+            break;
+        }
+        pieces = step_pieces(e, pieces, b, ctx);
+    }
+    Geometry { pieces }
 }
 
 pub(crate) fn apply_one(id: &str, p: &Value, path: &PathData, b: Rect, ctx: &GeomContext) -> PathData {
@@ -829,7 +915,7 @@ pub(crate) fn apply_one(id: &str, p: &Value, path: &PathData, b: Rect, ctx: &Geo
         "distort.freeDistort" => distort::free_distort(path, b, p),
         "distort.puckerBloat" => distort::pucker_bloat(path, b, num(p, "amount", 0.0)),
         "distort.roughen" => distort::roughen(path, b, p),
-        "distort.transform" => distort::transform(path, b, p, ctx.seed),
+        TRANSFORM => distort::transform(path, b, p, ctx.seed),
         "distort.tweak" => distort::tweak(path, b, p),
         "distort.twist" => distort::twist(path, b, num(p, "angle", 10.0)),
         "distort.zigZag" => distort::zig_zag(path, b, p),
@@ -849,8 +935,15 @@ pub(crate) fn apply_one(id: &str, p: &Value, path: &PathData, b: Rect, ctx: &Geo
                     &fallback
                 }
             };
+            // An explicit width is already scaled with the effect's other distances; the stroke's
+            // own weight scales as the Transform effects before this one scaled the stroke.
             let st = match p.get("width").and_then(Value::as_f64) {
                 Some(w) => std::borrow::Cow::Owned(StrokeLayer { width: w, ..base.clone() }),
+                None if scaled(ctx.stroke_scale) => {
+                    let mut s = base.clone();
+                    s.scale(ctx.stroke_scale);
+                    std::borrow::Cow::Owned(s)
+                }
                 None => std::borrow::Cow::Borrowed(base),
             };
             if st.width.is_nan() || st.width <= 0.0 {

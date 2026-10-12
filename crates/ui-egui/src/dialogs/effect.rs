@@ -137,7 +137,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     let changed = match vectorcraft_plugins::effect::installed(&id) {
         Some(plugin) => form::schema_fields(ui, d, &plugin.manifest().params),
         None if vectorcraft_effects::is_adjustment(&id) => adjust_fields(ui, d),
-        None if id == TRANSFORM => transform_fields(ui, d, app.session.general_unit()),
+        None if id == vectorcraft_effects::TRANSFORM => transform_fields(ui, d, app.session.general_unit()),
         None if id == ZIG_ZAG => zig_zag_fields(ui, d, app.session.general_unit()),
         None => {
             let doc = vectorcraft_effects::effect_info(&id).map(|e| e.params).unwrap_or_default();
@@ -288,9 +288,6 @@ fn values_changed(d: &mut Dialog) -> bool {
     d.fields.insert(form::PREVIEWED.into(), params);
     changed
 }
-
-/// The Transform effect (Effect › Distort & Transform › Transform…).
-const TRANSFORM: &str = "distort.transform";
 
 /// The Transform effect's dialog: Transform Each's Scale and Move sliders and Rotate dial, then
 /// the options Transform Objects, Transform Patterns and Scale Strokes & Effects (#885), the
