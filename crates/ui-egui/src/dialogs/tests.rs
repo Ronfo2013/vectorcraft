@@ -555,3 +555,101 @@ fn zig_zag_has_sliders_and_radio_buttons() {
     }
     assert!(!lines.contains(&"Ridges:"), "{lines:?}");
 }
+
+/// The Transform effect's Options (#885): Transform Objects, Transform Patterns, Scale Strokes &
+/// Effects, Reflect X, Reflect Y and Random are checkboxes whose boxes are painted (an outlined
+/// square just left of the label, inside the dialog's clip) in both states, and toggling one
+/// updates the previewed effect.
+#[test]
+fn the_transform_effect_dialog_paints_its_option_checkboxes() {
+    const OPTIONS: [(&str, &str); 6] = [
+        ("Transform Objects", "objects"),
+        ("Transform Patterns", "patterns"),
+        ("Scale Strokes & Effects", "strokes"),
+        ("Reflect X", "reflectX"),
+        ("Reflect Y", "reflectY"),
+        ("Random", "random"),
+    ];
+    let mut app = app();
+    let id = app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap()["id"].as_u64().unwrap();
+    app.run("select.all", json!({})).unwrap();
+    app.run("effect.dialog", json!({"effect": "distort.transform"})).unwrap();
+    for checked in [false, true] {
+        let d = app.ui.dialog.as_mut().unwrap();
+        for (_, key) in OPTIONS {
+            d.fields.insert(key.into(), json!(checked));
+        }
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        theme::apply(&ctx, Default::default());
+        ctx.run_ui(egui::RawInput::default(), |ui| show(&mut app, ui.ctx())).textures_delta.clear();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| show(&mut app, ui.ctx()));
+        out.textures_delta.clear();
+        // Every painted text with its position and clip, every small outlined square with its clip.
+        let mut texts: Vec<(String, egui::Pos2, egui::Rect)> = vec![];
+        let mut boxes: Vec<(egui::Rect, egui::Rect)> = vec![];
+        fn walk(s: &egui::Shape, clip: egui::Rect, texts: &mut Vec<(String, egui::Pos2, egui::Rect)>, boxes: &mut Vec<(egui::Rect, egui::Rect)>) {
+            match s {
+                egui::Shape::Text(t) => texts.push((t.galley.text().to_string(), t.pos, clip)),
+                egui::Shape::Rect(r) if r.stroke.width > 0.0 && r.rect.width() <= 16.0 && r.rect.height() <= 16.0 => boxes.push((r.rect, clip)),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, clip, texts, boxes)),
+                _ => {}
+            }
+        }
+        for c in &out.shapes {
+            walk(&c.shape, c.clip_rect, &mut texts, &mut boxes);
+        }
+        for (label, _) in OPTIONS {
+            let (_, pos, clip) = texts.iter().find(|(t, _, _)| t == label).unwrap_or_else(|| panic!("{label} painted, checked={checked}: {texts:?}"));
+            assert!(clip.contains(*pos), "{label} inside the dialog's clip {clip:?}, at {pos:?}");
+            let bx = boxes.iter().find(|(b, _)| b.right() < pos.x && pos.x - b.right() < 12.0 && (b.center().y - pos.y).abs() < 14.0);
+            let (b, bclip) = bx.unwrap_or_else(|| panic!("a box left of {label} at {pos:?}, checked={checked}: {boxes:?}"));
+            assert!(bclip.contains_rect(*b), "{label}'s box {b:?} inside its clip {bclip:?}");
+        }
+    }
+    // Scale Strokes & Effects on reaches the previewed effect.
+    let effect = |app: &VectorcraftApp| app.session.doc().unwrap().doc.node(vectorcraft_doc::NodeId(id)).unwrap().appearance.effects[0].clone();
+    assert_eq!((effect(&app).params["strokes"].clone(), effect(&app).params["objects"].clone()), (json!(true), json!(true)));
+    app.ui.dialog.as_mut().unwrap().fields.insert("objects".into(), json!(false));
+    frame(&mut app, Default::default());
+    assert_eq!(effect(&app).params["objects"], json!(false));
+    confirm(&mut app).unwrap();
+    let p = effect(&app).params;
+    assert_eq!((&p["objects"], &p["patterns"], &p["strokes"]), (&json!(false), &json!(true), &json!(true)));
+}
+
+/// An unchecked checkbox at rest keeps a 3:1 contrast between its outline and the panel in every
+/// brightness (#885: with `button_border` it was 1.6:1 in Medium Dark, so the Transform effect's
+/// Reflect X / Reflect Y boxes all but vanished).
+#[test]
+fn resting_checkbox_outlines_contrast_with_the_panel() {
+    fn luminance(c: egui::Color32) -> f64 {
+        let ch = |v: u8| {
+            let s = v as f64 / 255.0;
+            if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * ch(c.r()) + 0.7152 * ch(c.g()) + 0.0722 * ch(c.b())
+    }
+    for brightness in theme::Brightness::ALL {
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        theme::apply(&ctx, brightness);
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 200.0))), ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            widgets::check(ui, "Reflect X", false, true);
+        });
+        out.textures_delta.clear();
+        let outline = out
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Rect(r) if r.stroke.width > 0.0 && r.rect.width() <= 16.0 => Some(r.stroke.color),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{brightness:?}: no outlined box"));
+        let panel = theme::Tokens::for_brightness(brightness).panel;
+        let (a, b) = (luminance(outline), luminance(panel));
+        let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+        assert!(contrast >= 3.0, "{brightness:?}: outline {outline:?} on panel {panel:?} is {contrast:.2}:1");
+    }
+}

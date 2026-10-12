@@ -212,6 +212,92 @@ fn transform_copies_stop_before_they_overflow() {
     assert!(all_finite(&out) && out.subpaths.len() < 10, "{}", out.subpaths.len());
 }
 
+/// Transform Objects off (#885): the geometry stays where it is, copies included; the options
+/// for patterns and strokes still apply.
+#[test]
+fn transform_objects_off_leaves_the_geometry_alone() {
+    let out = run("distort.transform", json!({"moveH": 20, "scaleH": 50, "copies": 3, "objects": false}), &square());
+    assert_eq!(out, square());
+    let b = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let fx = [fx("distort.transform", json!({"scaleH": 50, "scaleV": 50, "objects": false, "strokes": true, "patterns": true}))];
+    let g = apply_geometry_full(&fx, &square(), b, &GeomContext::default());
+    assert_eq!(g.path, square());
+    assert!(close(g.stroke_scale, 0.5, 1e-9), "{}", g.stroke_scale);
+    assert_ne!(g.pattern, vectorcraft_geom::Affine::IDENTITY);
+    // Old files without the key transform their objects.
+    assert_ne!(run("distort.transform", json!({"moveH": 20}), &square()), square());
+}
+
+/// Scale Strokes & Effects (#885): the stroke scale is the uniform factor √|scaleH·scaleV| of
+/// each Transform effect with the option on, and the distances of the effects after it scale too.
+#[test]
+fn transform_scale_strokes_and_effects_reports_the_factor_and_scales_later_effects() {
+    let b = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let full = |fx: &[Effect]| apply_geometry_full(fx, &square(), b, &GeomContext::default());
+    let off = full(&[fx("distort.transform", json!({"scaleH": 200, "scaleV": 200}))]);
+    assert!(close(off.stroke_scale, 1.0, 1e-9), "off by default");
+    let on = full(&[fx("distort.transform", json!({"scaleH": 200, "scaleV": 50, "strokes": true}))]);
+    assert!(close(on.stroke_scale, 1.0, 1e-9), "200 % × 50 % keeps the area: {}", on.stroke_scale);
+    let twice = full(&[
+        fx("distort.transform", json!({"scaleH": 200, "scaleV": 200, "strokes": true})),
+        fx("distort.transform", json!({"scaleH": 300, "scaleV": 300, "strokes": true})),
+    ]);
+    assert!(close(twice.stroke_scale, 6.0, 1e-9), "{}", twice.stroke_scale);
+    // A 10 pt offset after a 200 % scale with the option offsets 20 pt; without it, 10 pt.
+    let offset = |strokes: bool| {
+        let g =
+            full(&[fx("distort.transform", json!({"scaleH": 200, "scaleV": 200, "strokes": strokes})), fx("path.offsetPath", json!({"offset": 10}))]);
+        g.path.bounds().unwrap().width()
+    };
+    assert!(close(offset(true), 240.0, 1e-6), "{}", offset(true));
+    assert!(close(offset(false), 220.0, 1e-6), "{}", offset(false));
+    // Random: the stroke follows the shares of the scales the object got (each axis its own).
+    let r = full(&[fx("distort.transform", json!({"scaleH": 50, "scaleV": 50, "strokes": true, "random": true}))]);
+    let rb = r.path.bounds().unwrap();
+    assert!(close(r.stroke_scale, (rb.width() * rb.height()).sqrt() / 100.0, 1e-9), "{} vs {rb:?}", r.stroke_scale);
+    // Reflections keep the weight.
+    let m = full(&[fx("distort.transform", json!({"reflectX": true, "strokes": true}))]);
+    assert!(close(m.stroke_scale, 1.0, 1e-9), "{}", m.stroke_scale);
+}
+
+/// Transform Patterns (#885): the pattern paints move by the effect's own transformation,
+/// composed over several Transform effects; the strokes' weights and dashes and the pattern
+/// paints of an appearance follow through [`adjust_item`].
+#[test]
+fn transform_patterns_moves_the_pattern_paints_and_adjust_item_applies_both() {
+    use vectorcraft_doc::color::Paint;
+    use vectorcraft_doc::{Dash, FillLayer};
+    use vectorcraft_geom::Affine;
+    let b = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let full = |fx: &[Effect]| apply_geometry_full(fx, &square(), b, &GeomContext::default());
+    assert_eq!(full(&[fx("distort.transform", json!({"moveH": 30}))]).pattern, Affine::IDENTITY, "off by default");
+    let moved = full(&[fx("distort.transform", json!({"moveH": 30, "patterns": true}))]);
+    assert_eq!(moved.pattern, Affine::translate((30.0, 0.0)));
+    let both =
+        full(&[fx("distort.transform", json!({"moveH": 30, "patterns": true})), fx("distort.transform", json!({"moveV": 10, "patterns": true}))]);
+    assert_eq!(both.pattern, Affine::translate((30.0, 10.0)));
+    // Scaling about the centre of a 100 pt square keeps the pattern's centre at (50, 50).
+    let scaled = full(&[fx("distort.transform", json!({"scaleH": 50, "scaleV": 50, "patterns": true}))]);
+    assert_eq!(scaled.pattern * Point::new(50.0, 50.0), Point::new(50.0, 50.0));
+    assert_eq!(scaled.pattern * Point::new(0.0, 0.0), Point::new(25.0, 25.0));
+    // adjust_item: a stroke's weight and dashes scale, a pattern paint moves, a solid fill stays.
+    let xf = Affine::translate((5.0, 5.0));
+    let mut st = AppearanceItem::Stroke(StrokeLayer::new(Paint::Pattern { pattern: "dots".into(), xf }, 2.0));
+    if let AppearanceItem::Stroke(s) = &mut st {
+        s.dash = Some(Dash { pattern: vec![4.0, 2.0], offset: 1.0, ..Default::default() });
+    }
+    assert!(adjusts_item(&st, 2.0, Affine::IDENTITY) && adjusts_item(&st, 1.0, xf) && !adjusts_item(&st, 1.0, Affine::IDENTITY));
+    adjust_item(&mut st, 2.0, moved.pattern);
+    let AppearanceItem::Stroke(s) = &st else { panic!() };
+    assert_eq!((s.width, s.dash.as_ref().map(|d| d.pattern.clone())), (4.0, Some(vec![8.0, 4.0])));
+    assert_eq!(s.paint, Paint::Pattern { pattern: "dots".into(), xf: moved.pattern * xf });
+    let mut fill = AppearanceItem::Fill(FillLayer::new(Paint::solid(vectorcraft_doc::color::Color::rgb(1.0, 0.0, 0.0))));
+    assert!(!adjusts_item(&fill, 2.0, moved.pattern));
+    let before = fill.clone();
+    adjust_item(&mut fill, 2.0, moved.pattern);
+    assert_eq!(fill, before);
+}
+
 #[test]
 fn pucker_bloat_moves_anchors_in_opposite_directions() {
     let bloat = run("distort.puckerBloat", json!({"amount": 50}), &square());

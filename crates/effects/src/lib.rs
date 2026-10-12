@@ -54,8 +54,14 @@ mod tests;
 mod tests_scale;
 
 use serde_json::{Map, Value, json};
+use vectorcraft_doc::color::Paint;
 use vectorcraft_doc::{AppearanceItem, Effect, Node, NodeKind, StrokeLayer};
-use vectorcraft_geom::{BezPath, FillRule, PathData, Rect};
+use vectorcraft_geom::{Affine, BezPath, FillRule, PathData, Rect};
+
+/// The Transform effect (Effect › Distort & Transform › Transform), whose Transform Objects,
+/// Transform Patterns and Scale Strokes & Effects options reach past the geometry
+/// ([`apply_geometry_full`]).
+pub const TRANSFORM: &str = "distort.transform";
 
 pub use adjust::{ADJUSTMENTS, ColorMap, ImageHook, adjust, adjust_in_document, color_map, curve_at, curve_points, has_adjustment, is_adjustment};
 pub use bake::{StrokeArt, bake_appearance, bake_document, expand_art, expand_leaf, fresh_ids, needs_bake};
@@ -235,8 +241,8 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
             "distort.transform",
             "Transform…",
             DT,
-            "{scaleH: % (100), scaleV: % (100), moveH: pt (0; right = +), moveV: pt (0; down = +), rotate: deg (0; counter-clockwise), copies: 0..1000 (0; each copy transforms the last again), reflectX: bool (false; flips left to right), reflectY: bool (false; flips top to bottom), reference: 0..8 (4; the point of the bounds' 9-point grid it scales, rotates and reflects about: 0 top left, 4 centre, 8 bottom right), random: bool (false; each scale goes a random share of the way from 100 % to its value, each move and the angle a random share of theirs, differently for each object and the same on every redraw)}",
-            json!({"scaleH": 100.0, "scaleV": 100.0, "moveH": 0.0, "moveV": 0.0, "rotate": 0.0, "copies": 0, "reflectX": false, "reflectY": false, "reference": 4, "random": false}),
+            "{scaleH: % (100), scaleV: % (100), moveH: pt (0; right = +), moveV: pt (0; down = +), rotate: deg (0; counter-clockwise), copies: 0..1000 (0; each copy transforms the last again), reflectX: bool (false; flips left to right), reflectY: bool (false; flips top to bottom), reference: 0..8 (4; the point of the bounds' 9-point grid it scales, rotates and reflects about: 0 top left, 4 centre, 8 bottom right), random: bool (false; each scale goes a random share of the way from 100 % to its value, each move and the angle a random share of theirs, differently for each object and the same on every redraw), objects: bool (true; Transform Objects: off, the geometry stays and only the patterns and strokes follow the options below), patterns: bool (false; Transform Patterns: the pattern fills and strokes transform along), strokes: bool (false; Scale Strokes & Effects: the stroke weights and dashes and the distances of the effects after this one scale by the uniform scale factor √|scaleH·scaleV|)}",
+            json!({"scaleH": 100.0, "scaleV": 100.0, "moveH": 0.0, "moveV": 0.0, "rotate": 0.0, "copies": 0, "reflectX": false, "reflectY": false, "reference": 4, "random": false, "objects": true, "patterns": false, "strokes": false}),
         ),
         g(
             "distort.tweak",
@@ -713,21 +719,100 @@ pub fn apply_geometry(effects: &[Effect], path: &PathData, bounds: Rect) -> Path
 
 /// [`apply_geometry`] with an explicit [`GeomContext`].
 pub fn apply_geometry_with(effects: &[Effect], path: &PathData, bounds: Rect, ctx: &GeomContext) -> PathData {
-    let mut cur = path.clone();
+    apply_geometry_full(effects, path, bounds, ctx).path
+}
+
+/// What the geometry effects make of a path ([`apply_geometry_full`]): its reshaped geometry, and
+/// what the Transform effect's Scale Strokes & Effects and Transform Patterns options ask of the
+/// appearance that paints it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Geometry {
+    /// The path after the effects.
+    pub path: PathData,
+    /// The factor the strokes' weights (and dashes) scale by: the uniform scale factors (√|det|) of
+    /// the Transform effects with Scale Strokes & Effects on, multiplied; 1 without any.
+    pub stroke_scale: f64,
+    /// The transformation of the pattern fills and strokes, in document space: the Transform
+    /// effects with Transform Patterns on, composed; the identity without any.
+    pub pattern: Affine,
+}
+
+impl Geometry {
+    /// Scale the stroke weights and move the pattern paints of every fill and stroke of `a` as
+    /// the Transform effects asked.
+    pub fn adjust_appearance(&self, a: &mut vectorcraft_doc::Appearance) {
+        for item in &mut a.items {
+            adjust_item(item, self.stroke_scale, self.pattern);
+        }
+    }
+}
+
+/// Would [`adjust_item`] change `item`: is it a stroke and `k` a scale, or a pattern paint and
+/// `m` a move?
+pub fn adjusts_item(item: &AppearanceItem, k: f64, m: Affine) -> bool {
+    (!item.is_fill() && (k - 1.0).abs() > 1e-9) || (m != Affine::IDENTITY && matches!(item.paint(), Paint::Pattern { .. }))
+}
+
+/// Scale `item`'s stroke weight and dashes by `k` and move its pattern paint by `m` (document
+/// space), as the Transform effects' Scale Strokes & Effects and Transform Patterns ask
+/// ([`Geometry`]).
+pub fn adjust_item(item: &mut AppearanceItem, k: f64, m: Affine) {
+    let paint = match item {
+        AppearanceItem::Fill(f) => &mut f.paint,
+        AppearanceItem::Stroke(s) => {
+            if (k - 1.0).abs() > 1e-9 {
+                s.width *= k;
+                if let Some(d) = &mut s.dash {
+                    d.scale(k);
+                }
+            }
+            &mut s.paint
+        }
+    };
+    if m != Affine::IDENTITY
+        && let Paint::Pattern { xf, .. } = paint
+    {
+        *xf = m * *xf;
+    }
+}
+
+/// [`apply_geometry_with`], also telling how the Transform effects in the list change the
+/// appearance ([`Geometry`]). A Transform effect with Scale Strokes & Effects on also scales the
+/// distances of the effects after it in the list, as Object › Transform does to applied effects.
+pub fn apply_geometry_full(effects: &[Effect], path: &PathData, bounds: Rect, ctx: &GeomContext) -> Geometry {
+    let mut out = Geometry { path: path.clone(), stroke_scale: 1.0, pattern: Affine::IDENTITY };
     let mut b = bounds;
     let mut first = true;
     for e in effects.iter().filter(|e| e.visible && is_geometry(&e.id)) {
         if !first {
-            b = cur.bounds().unwrap_or(b);
+            b = out.path.bounds().unwrap_or(b);
         }
         first = false;
-        if cur.is_empty() {
+        if out.path.is_empty() {
             break;
         }
-        let p = merged_params(&e.id, &e.params);
-        cur = apply_one(&e.id, &p, &cur, b, ctx);
+        let p = if out.stroke_scale != 1.0 {
+            let mut scaled = e.clone();
+            scale_effect(&mut scaled, out.stroke_scale);
+            merged_params(&scaled.id, &scaled.params)
+        } else {
+            merged_params(&e.id, &e.params)
+        };
+        if e.id == TRANSFORM {
+            let m = distort::transform_affine(b, &p, ctx.seed);
+            if util::flag(&p, "patterns", false) {
+                out.pattern = m * out.pattern;
+            }
+            if util::flag(&p, "strokes", false) {
+                let k = m.determinant().abs().sqrt();
+                if k.is_finite() && k > 0.0 {
+                    out.stroke_scale *= k;
+                }
+            }
+        }
+        out.path = apply_one(&e.id, &p, &out.path, b, ctx);
     }
-    cur
+    out
 }
 
 /// Convenience wrapper on kurbo paths.

@@ -991,12 +991,15 @@ fn choice_row(ui: &mut Ui, text: &str, enabled: bool) -> (Rect, Response, Color3
         ui.allocate_exact_size(vec2(18.0 + galley.size().x, 20.0f32.max(galley.size().y)), if enabled { Sense::click() } else { Sense::hover() });
     let bx = Rect::from_min_size(pos2(rect.left(), rect.center().y - 6.5), Vec2::splat(13.0));
     ui.painter().galley(pos2(bx.right() + 5.0, rect.center().y - galley.size().y / 2.0), galley, t.text);
+    // At rest the box's outline is `text_dim`: `button_border` sits at 1.6–2.5:1 against the panel
+    // in every brightness, so an unchecked box all but vanished (#885); `text_dim` keeps the 3:1
+    // a control's outline needs (3.5:1 in Medium Dark, more in the others).
     let border = if !enabled {
         t.divider
     } else if resp.hovered() {
         t.text
     } else {
-        t.button_border
+        t.text_dim
     };
     (bx, resp, border)
 }

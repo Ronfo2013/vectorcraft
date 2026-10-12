@@ -19,7 +19,7 @@ use vectorcraft_geom::{FillRule, PathData};
 
 use crate::group::{has_own_paint, paints};
 use crate::{
-    GeomContext, adjust_in_document, apply_geometry_with, crop_marks_art, evaluate_container, has_adjustment, has_crop_marks, has_geometry,
+    GeomContext, Geometry, adjust_in_document, apply_geometry_full, crop_marks_art, evaluate_container, has_adjustment, has_crop_marks, has_geometry,
     has_pathfinder, is_geometry, needs_outline, reshape,
 };
 
@@ -60,12 +60,22 @@ fn geometry(n: &Node) -> Option<(PathData, FillRule)> {
     }
 }
 
-fn apply(effects: &[vectorcraft_doc::Effect], path: &PathData, ctx: &GeomContext) -> PathData {
+fn apply(effects: &[vectorcraft_doc::Effect], path: &PathData, ctx: &GeomContext) -> Geometry {
     if !has_geometry(effects) || path.is_empty() {
-        return path.clone();
+        return Geometry { path: path.clone(), stroke_scale: 1.0, pattern: vectorcraft_geom::Affine::IDENTITY };
     }
     let b = vectorcraft_geom::Shape::bounding_box(&path.to_bezpath());
-    apply_geometry_with(effects, path, b, ctx)
+    apply_geometry_full(effects, path, b, ctx)
+}
+
+/// The geometry of `item` (its own effects on the object's `g`) and the item as the Transform
+/// effects among them leave it (stroke weight, pattern), without those effects.
+fn item_geometry(item: &AppearanceItem, g: &PathData, ctx: &GeomContext) -> (PathData, AppearanceItem) {
+    let e = apply(item_effects(item), g, &ctx.item(item));
+    let mut it = item.clone();
+    clear_item_effects(&mut it);
+    crate::adjust_item(&mut it, e.stroke_scale, e.pattern);
+    (e.path, it)
 }
 
 /// A path node of `kind`'s flavour (compound when the result has several subpaths).
@@ -188,10 +198,13 @@ fn piece(d: &mut Document, n: &Node, path: PathData, rule: FillRule, item: Appea
 fn leaf_base(n: &Node) -> Option<(PathData, FillRule, GeomContext<'_>, Node)> {
     let (base, rule) = geometry(n)?;
     let ctx = GeomContext::of(n);
-    let g = apply(&n.appearance.effects, &base, &ctx);
+    let e = apply(&n.appearance.effects, &base, &ctx);
     let mut m = n.clone();
     m.appearance.effects.retain(|e| !is_geometry(&e.id));
-    Some((g, rule, ctx, m))
+    // Scale Strokes & Effects and Transform Patterns of the Transform effects are baked into the
+    // fills and strokes, as the renderer draws them.
+    e.adjust_appearance(&mut m.appearance);
+    Some((e.path, rule, ctx, m))
 }
 
 fn bake_leaf(d: &mut Document, n: &Node) -> Option<Node> {
@@ -202,18 +215,15 @@ fn bake_leaf(d: &mut Document, n: &Node) -> Option<Node> {
     }
     // Per-item geometry: one path per fill/stroke, grouped under the object's transparency and
     // raster effects.
-    let children = n
-        .appearance
-        .items
+    // From `m`'s items: the object's Transform effects may have scaled their strokes and moved
+    // their patterns.
+    let children = std::mem::take(&mut m.appearance.items)
         .iter()
         .map(|item| {
-            let ig = apply(item_effects(item), &g, &ctx.item(item));
-            let mut it = item.clone();
-            clear_item_effects(&mut it);
+            let (ig, it) = item_geometry(item, &g, &ctx);
             Arc::new(piece(d, n, ig, rule, it))
         })
         .collect();
-    m.appearance.items.clear();
     m.kind = NodeKind::Group { children, clip: false };
     Some(m)
 }
@@ -238,10 +248,11 @@ pub fn expand_leaf(d: &mut Document, n: &Node, stroke_art: StrokeArt) -> Option<
     let (g, rule, ctx, mut m) = leaf_base(n)?;
     m.appearance.effects.retain(|e| e.visible);
     let mut pieces = vec![];
-    for item in n.appearance.items.iter().filter(|i| paints(i)) {
-        let ig = apply(item.effects(), &g, &ctx.item(item));
-        let mut it = item.clone();
-        clear_item_effects(&mut it);
+    // `m`'s items: the object's Transform effects may have scaled their strokes and moved their
+    // patterns.
+    let items = m.appearance.items.clone();
+    for item in items.iter().filter(|i| paints(i)) {
+        let (ig, mut it) = item_geometry(item, &g, &ctx);
         it.effects_mut().retain(|e| e.visible);
         let p = match &it {
             AppearanceItem::Stroke(st) => stroke_art(d, &ig, rule, st),
@@ -318,10 +329,11 @@ pub fn bake_appearance(n: &Node) -> Option<Node> {
         Arc::new(p)
     };
     let mut pieces = vec![];
-    for item in n.appearance.items.iter().filter(|i| paints(i)) {
-        let ig = apply(item_effects(item), &g, &ctx.item(item));
-        let mut it = item.clone();
-        clear_item_effects(&mut it);
+    // `m`'s items: the object's Transform effects may have scaled their strokes and moved their
+    // patterns.
+    let items = m.appearance.items.clone();
+    for item in items.iter().filter(|i| paints(i)) {
+        let (ig, it) = item_geometry(item, &g, &ctx);
         pieces.push(match &it {
             AppearanceItem::Stroke(st) if st.brush.is_none() => {
                 let fill = FillLayer { opacity: st.opacity, blend: st.blend, ..FillLayer::new(st.paint.clone()) };
