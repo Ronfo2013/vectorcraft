@@ -279,6 +279,10 @@ struct Reader<'a> {
     object_depth: usize,
     /// The gradient mesh being read (`/Mesh X!`), from its `X#` entries.
     mesh: Option<super::mesh::Builder>,
+    /// Mesh points the file may still have ([`super::mesh::MAX_MESH_POINTS`] in all).
+    mesh_points_left: usize,
+    /// Mesh corners whose value after the colour isn't 1, read as opaque.
+    mesh_odd_opacity: usize,
     /// The header's bounding boxes and template box.
     bbox: Option<[f64; 4]>,
     hires: Option<[f64; 4]>,
@@ -374,6 +378,9 @@ const SKIPPED: &[(&str, &str)] = &[
 /// loss: the file has art the document lacks). Seen in Illustrator 30 files: gradient meshes,
 /// written `/Mesh X!`, their nodes as `X#` entries, `/End X!` (#951).
 pub const OBJECTS_LEFT_OUT: &str = "objects of kinds VectorCraft doesn't read from the editing data are left out of the layers";
+/// The start of the note for gradient mesh corners whose value after the colour isn't 1 (always 1
+/// in the files read so far; perhaps an opacity, not verified), read as opaque: a loss.
+pub const MESH_OPACITY_UNREAD: &str = "gradient mesh points with a value VectorCraft doesn't read (perhaps their opacity) came in opaque";
 /// The start of the note for operators the reader doesn't know, skipped with their operands: state
 /// the document doesn't model, where the page comparison covers the art round them (no loss).
 pub const OPERATORS_SKIPPED: &str = "operators VectorCraft doesn't know were skipped";
@@ -429,6 +436,8 @@ impl<'a> Reader<'a> {
             in_object: None,
             object_depth: 0,
             mesh: None,
+            mesh_points_left: super::mesh::MAX_MESH_POINTS,
+            mesh_odd_opacity: 0,
             bbox: None,
             hires: None,
             template: None,
@@ -597,8 +606,11 @@ impl<'a> Reader<'a> {
         // The gradients defined so far, lent (and those it defines kept).
         sub.gradients = std::mem::take(&mut self.gradients);
         sub.nodes = self.nodes;
+        sub.mesh_points_left = self.mesh_points_left;
         let read = sub.open(Kind::Group, false).and_then(|()| sub.run());
         self.nodes = sub.nodes;
+        self.mesh_points_left = sub.mesh_points_left;
+        self.mesh_odd_opacity += sub.mesh_odd_opacity;
         self.gradients = std::mem::take(&mut sub.gradients);
         let whole = read.is_ok()
             && sub.unsupported.is_empty()
@@ -841,6 +853,9 @@ impl<'a> Reader<'a> {
                 }
                 return Ok(());
             }
+            // A procedure's braces (a colour space's tint transform, `[/Separation … {…}]`) leave
+            // the operands where they are: the array round them is still open.
+            "{" | "}" if self.in_object.is_some() => return Ok(()),
             _ if self.in_object.is_some() => {
                 let vals = self.operands();
                 if w == "X#"
@@ -1080,25 +1095,40 @@ impl<'a> Reader<'a> {
     /// A gradient mesh object ends: its patches (in art space) become mesh objects in a group,
     /// which the markers after the object name and set like any object. Patches that couldn't be
     /// read are counted as left out; a mesh with none is an unread object.
+    /// A gradient mesh object ends: its patches (in art space) become mesh objects in a group,
+    /// which the markers after the object name and set like any object. What isn't read is
+    /// counted as left out, never an error: patches the builder couldn't read, patches past
+    /// [`MAX_NODES`] or the file's mesh points, a mesh with no patch at all, and a mesh outside the
+    /// layers (where art can't go).
     fn end_mesh(&mut self, builder: super::mesh::Builder, hidden: bool) -> Result<(), String> {
-        let (meshes, skipped) = builder.finish();
-        if skipped > 0 {
-            *self.unread_objects.entry("Mesh patch".into()).or_default() += skipped;
-        }
-        if meshes.is_empty() {
+        self.after_object = false;
+        if self.frames.is_empty() {
             *self.unread_objects.entry("Mesh".into()).or_default() += 1;
-            self.after_object = false;
             return Ok(());
         }
+        let read = builder.finish(&mut self.mesh_points_left);
+        for (why, n) in read.skipped {
+            *self.unread_objects.entry(why).or_default() += n;
+        }
+        self.mesh_odd_opacity += read.odd_opacity;
         let to_doc = self.space();
         let gs = self.gs.clone();
-        let children: Vec<Arc<Node>> = meshes
-            .into_iter()
-            .map(|mut m| {
-                m.transform(to_doc);
-                Arc::new(self.new_node(NodeKind::Mesh(m), &gs))
-            })
-            .collect();
+        let mut children: Vec<Arc<Node>> = vec![];
+        for mut m in read.meshes {
+            m.transform(to_doc);
+            // The group itself is one more object.
+            if self.nodes.saturating_add(children.len() + 2) > MAX_NODES || !super::mesh::sound(&m) {
+                let why = if super::mesh::sound(&m) { "Mesh patch (over the object limit)" } else { "Mesh patch" };
+                *self.unread_objects.entry(why.into()).or_default() += 1;
+                continue;
+            }
+            children.push(Arc::new(self.new_node(NodeKind::Mesh(m), &gs)));
+        }
+        if children.is_empty() {
+            *self.unread_objects.entry("Mesh".into()).or_default() += 1;
+            return Ok(());
+        }
+        self.nodes += children.len();
         let mut group = self.new_node(NodeKind::Group { children, clip: false }, &gs);
         group.opacity = gs.opacity;
         group.blend = gs.blend;
@@ -1633,6 +1663,10 @@ impl<'a> Reader<'a> {
         }
         if let Some(kind) = &self.in_object {
             return Err(format!("its `/{kind} X!` object doesn't end"));
+        }
+        if self.mesh_odd_opacity > 0 {
+            let note = format!("{MESH_OPACITY_UNREAD} ({})", self.mesh_odd_opacity);
+            self.warn(&note);
         }
         if !self.unread_objects.is_empty() {
             let kinds: Vec<String> = self.unread_objects.iter().map(|(k, n)| format!("{k}: {n}")).collect();
