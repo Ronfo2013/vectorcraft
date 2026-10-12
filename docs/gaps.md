@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (G11: PDF text opens where the file draws it, #722: kerning or none as the file set it, word and character spacing and TJ adjustments kept per character, text rise as baseline shift, narrow vertical glyphs centred on their column, justified text boxes back as area type; G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every known shortfall against Illustrator, one entry each, **ranked by how much it stops a professional from
 switching**. This is the work list: unless you were given a task, pick the highest-ranked gap you can make
@@ -126,9 +126,23 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
   panel (1.6–2.5:1 across the four brightnesses, under the 3:1 a control's outline needs); every checkbox and radio at
   rest now outlines in `text_dim` (3.5–7.6:1), with headless frame tests for the contrast in each brightness and for
   each Options box being painted beside its label inside the dialog's clip.
+  PDF text opens where the file draws it (#722). Each line came in as point type laid out by the font's metrics
+  (its kerning, one even tracking for the line, every glyph on one baseline, a vertical glyph's column an em
+  wide), so wherever the file spaced glyphs otherwise they slid: a file that didn't kern, word and character
+  spacing (`Tw`, `Tc`), `TJ` adjustments, a superscript or subscript (`Ts`, pulled onto the baseline, or the whole
+  line onto a raised first mark), a vertical glyph narrower than an em. Now the line takes the font's kerning or
+  none, whichever the file followed, and tracking that puts every glyph where the file drew it (one value for an
+  evenly spaced line, else each character its own, word spacing on the spaces); text rise stays in the line as
+  baseline shift (a glyph a little off the baseline further than a space away, as the next cell of a table's row,
+  stays an object of its own; type on a path is never shifted off its curve); a vertical glyph's column centre
+  comes from the font's own position vectors (`/W2`, else half its `/W` or `/DW` width, ISO 32000-1 §9.7.4.3);
+  justified text boxes (word spacing on each wrapped line) come back as justified area type, and text boxes word
+  spaced alike on every line, or spaced a hair unevenly, as area type too. Fixtures written from the
+  specification cover Td, TD, Tm, T*, TL, ', ", Ts, Tz, Tc, Tw, TJ, the CTM (scaled, flipped, anisotropic), the
+  crop box and page rotation, Type 0 (Identity-H and -V) and Type 3 fonts, point and area type
+  (`tests_text_placement`); a font that is neither embedded nor installed still draws in a stand-in.
 - **Missing:** Shape Builder on the reporter's own file (#937, until confirmed on it); the Transform effect's Scale Strokes
-  & Effects doesn't scale the distances of raster effects (shadows, glows, blur, feather) after it, which keep theirs;
-  PDF text boxes moving on open (#722).
+  & Effects doesn't scale the distances of raster effects (shadows, glows, blur, feather) after it, which keep theirs.
 - **Impact:** wrong output in everyday work.
 - **Estimate:** 8–15 h.
 
@@ -242,6 +256,7 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | G11: #722 fixed (PDF text slid on open where the file spaced its glyphs other than the font's metrics: kerning, word and character spacing, `TJ` adjustments, text rise, narrow vertical glyphs; justified text boxes stayed lines); estimate unchanged, #937 open |
 | 2026-10-11 | minor | G11: #834 fixed (a tool drag's preview skipped the pointer position in the frame it came back into the window, and the move in the release's frame, so a handle or anchor stayed behind until the next move and the release committed the stale shape); estimate unchanged |
 | 2026-10-11 | minor | G11: #864 fixed (SVG saves wrote unitless sizes, so a document in mm/in/pt reopened in pixels); estimate unchanged |
 | 2026-10-12 | minor | G9: gradient meshes read from `.ai` editing data; the user's Illustrator 30.8 file opens whole; estimate unchanged |
