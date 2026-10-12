@@ -1639,6 +1639,8 @@ mod tests_plugins;
 #[cfg(test)]
 mod tests_prefs;
 #[cfg(test)]
+mod tests_prefs_g12;
+#[cfg(test)]
 mod tests_previewbounds;
 #[cfg(test)]
 mod tests_print;

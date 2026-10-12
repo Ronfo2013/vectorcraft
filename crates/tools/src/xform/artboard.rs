@@ -263,7 +263,7 @@ impl Tool for ArtboardTool {
                     out.push(Action::Begin(label(m.alt).into()));
                 }
                 self.drag = Some(Drag::Move { index, many, start, rect, began: true, copy: m.alt });
-                let d = self.snap_move(cx, rect, move_delta(start, p, m.shift), m.alt);
+                let d = self.snap_move(cx, rect, move_delta(start, p, m.shift, 0.0), m.alt);
                 self.preview = Some(rect + d);
                 let mut v = json!({ "index": index, "dx": d.x, "dy": d.y, "moveArt": self.move_art, "copy": m.alt });
                 if many {

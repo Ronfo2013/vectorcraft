@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (bezier drag previews follow the pointer back into the window and to the release, #834; units survive an SVG save, #864; G1: Alt swaps Direct and Group Selection, Shift-click subtracts segments and grouped objects, Scissors/Pencil/Knife Alt behaviours from the shortcut reference; earlier: a marquee needs to touch a path, #1103) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (Preferences: Constrain Angle, Corner Radius, Appearance of Black and Real-time Drawing and Editing act, #394 first batch; bezier drag previews follow the pointer back into the window and to the release, #834; units survive an SVG save, #864; G1: Alt swaps Direct and Group Selection, Shift-click subtracts segments and grouped objects, Scissors/Pencil/Knife Alt behaviours from the shortcut reference; earlier: a marquee needs to touch a path, #1103) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft's tools, handles, snapping and panels behave next to Illustrator's. A vector illustrator's
 trust is in the details: where a handle lands, what Shift and Alt do mid-drag, what a smart guide snaps to,
@@ -39,7 +39,7 @@ tools, never checked side by side) isn't captured row by row.
 | Behaviour (Illustrator, public docs) | Status | Notes |
 |---|---|---|
 | Click: corner anchor; drag: smooth anchor with symmetric handles | done | `pen.rs`; the drag's preview follows every pointer position, back into the window after leaving it and in the release's frame, and the release commits where the pointer let go (#834) |
-| Shift constrains segments and handles to 45° | done | Illustrator's Constrain Angle preference is honoured (`constrainAngle`) |
+| Shift constrains segments and handles to 45° | done | Illustrator's Constrain Angle preference is honoured (`constrainAngle`): segments, the Pen's handles, Shift moves with the selection tools, Free Transform, slices, Reshape, the Knife and Measure (#394) |
 | Alt mid-drag splits the handles (only the outgoing follows) | done | keeps the curve already shaped |
 | Space mid-drag repositions the anchor, handles and all | done | |
 | Click the first anchor to close; the drag shapes the closing curve | done | |
@@ -165,7 +165,11 @@ Layers panel.
 | Blend panel (30.7) | missing | Blend Options dialog exists |
 | SVG Interactivity, Retype, Comments, Version History panels | missing | the last two are cloud features (out of scope) |
 | Workspaces (save, reset, switch) | done | |
-| Preferences: every option acts | partial | ~17 stored but unused (#394) |
+| Preferences: every option acts | partial | ~12 stored but unused (#394): Highlight Alternate Glyphs, Identify Objects By, East Asian Type units, Open Documents As Tabs, GPU Performance beyond Animated Zoom and Real-time Drawing, hyphenation language, Low Resolution Proxy for Linked EPS, scratch disks, legacy clipboard, Touch Workspace |
+| Preferences › General › Constrain Angle | done | arrow keys and Shift drags along the turned axes; Rectangle, Rounded Rectangle and Ellipse tools draw along them; not yet type, grids, polygons, stars or click-made shapes (#394) |
+| Preferences › General › Corner Radius | done | the Rounded Rectangle tool's and dialog's radius; ↑/↓ while drawing set it (#394) |
+| Preferences › Appearance of Black (On Screen, Printing / Exporting) | done | black ink alone as jet black on the canvas and in RGB/greyscale raster exports and Export for Screens; Save for Web and printing not yet (#394) |
+| Preferences › Performance › Real-time Drawing and Editing | done | off (or GPU Performance off): the art redraws at the release while the selection's outlines follow the drag (#394) |
 
 ## Look and feel
 
@@ -178,6 +182,7 @@ re-measure of the panels added since.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Preferences rows: Constrain Angle, Corner Radius, Appearance of Black, Real-time Drawing and Editing done (#394 first batch); ~12 stored options left |
 | 2026-10-11 | minor | Pen, Anchor Point and Direct Selection drags: the preview gets every pointer position, including after the pointer re-enters the window and the move in the release's frame (#834); score unchanged (estimated) |
 | 2026-10-11 | minor | Units: a document saved as SVG reopens in its own units (#864); score unchanged (estimated) |
 | 2026-10-11 | minor | G1 modifier pass over the shortcut reference's selection and shape-editing rows: Alt swaps Direct and Group Selection (Cmd+Alt lends Group Selection), Shift-click a segment adds or subtracts it, Group Selection's Shift-click subtracts, Scissors Alt adds an anchor, Pencil Alt smooths (option), Knife Alt cuts straight (Shift: 45°); two rows found missing (E during a marquee, Space moving the zoom marquee); Modifier keys score 80% → 85% (estimated) |

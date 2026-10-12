@@ -240,9 +240,16 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     // File Handling › Display Bitmaps as Anti-aliased Images in Pixel Preview: off, images show
     // their pixels as they rasterize, hard-edged.
     let smooth_images = pixel.is_none() || app.session.prefs.anti_aliased_bitmaps;
+    // Performance › Real-time Drawing and Editing off: while a tool drags, the art stays drawn as
+    // it was when the drag began and only the outlines of what is edited follow the pointer; the
+    // art is drawn again at the release.
+    let revision = match &app.canvas.key {
+        Some(k) if k.doc == st.uid as usize && !real_time_drawing(&app.session.prefs) && app.session.in_interaction() => k.revision,
+        _ => st.revision,
+    };
     let key = CacheKey {
         doc: st.uid as usize,
-        revision: st.revision,
+        revision,
         zoom: v.zoom,
         cx: v.center.x,
         cy: v.center.y,
@@ -258,6 +265,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         pixel,
         smooth_images,
         isolated: st.isolation.map(|id| id.0),
+        rich_black: app.session.prefs.black_on_screen == "rich",
     };
     // Placed documents' bitmaps are being made: draw again when they are ready.
     if vectorcraft_render::placed_document::busy() {
@@ -303,6 +311,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             highlight_substitutions: true,
             // General › Anti-aliased Artwork: off, edges are hard on screen (raster effects and
             // pattern tiles stay smooth), as in Illustrator.
+            // Appearance of Black › On Screen: black ink alone as jet black.
+            rich_black: key.rich_black,
             anti_alias: if app.session.prefs.anti_aliased_artwork { vectorcraft_render::AntiAlias::Art } else { vectorcraft_render::AntiAlias::None },
             progressive_placed: true,
             trace_views: true,
@@ -768,6 +778,14 @@ const HOLD_ZOOM: f64 = std::f64::consts::LN_2;
 /// as it is dragged sideways or held, instead of zooming to the area dragged across.
 pub(crate) fn animated_zoom(p: &vectorcraft_engine::Prefs) -> bool {
     p.animated_zoom && p.gpu_performance
+}
+
+/// Performance › Real-time Drawing and Editing, which needs GPU Performance as in Illustrator
+/// (<https://helpx.adobe.com/illustrator/kb/gpu-performance-preview-improvements.html>): art being
+/// moved, scaled or drawn is drawn fully as the pointer moves. Off, the art keeps its place on
+/// screen until the release while the outlines of what is edited follow the pointer.
+pub(crate) fn real_time_drawing(p: &vectorcraft_engine::Prefs) -> bool {
+    p.real_time_drawing && p.gpu_performance
 }
 
 /// Zoom for View → Actual Size (`view.actualSize`). With Preferences › General › Display Print
@@ -3859,5 +3877,85 @@ mod tests {
         assert!(!app.ui.task_bar_place.pinned);
         near(select(&mut app, &a), under_a);
         near(select(&mut app, &b), under_b);
+    }
+
+    /// Appearance of Black › On Screen (#394): "Display All Blacks Accurately" (the default) shows
+    /// 100% K as the dark grey it prints as; "as Rich Black" as jet black, and changing it draws
+    /// the art again.
+    #[test]
+    fn black_on_screen_shows_pure_black_as_rich_black() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 400, "height": 300, "colorMode": "cmyk"})).unwrap();
+        let id = app.session.execute("shape.rectangle", &json!({"x": 100, "y": 50, "width": 200, "height": 200})).unwrap()["id"].clone();
+        app.session.execute("paint.setFill", &json!({"color": {"c": 0, "m": 0, "y": 0, "k": 100}, "ids": [id]})).unwrap();
+        app.session.execute("paint.setStroke", &json!({"none": true, "ids": [id]})).unwrap();
+        app.canvas.worker_started = true; // render on this thread
+        let ctx = egui::Context::default();
+        // The darkest red of the art's opaque pixels, None when the art was not re-rendered.
+        let darkest = |app: &mut VectorcraftApp| -> Option<u8> {
+            let (_, mut delta) = frame_output(app, &ctx);
+            let art = app.canvas.texture.as_ref().unwrap().id();
+            let v = delta.set.iter().find(|e| e.0.eq(&art)).and_then(|e| e.1.last()).and_then(|d| {
+                let egui::ImageData::Color(img) = &d.image;
+                img.pixels.iter().filter(|c| c.a() == 255).map(|c| c.r()).min()
+            });
+            delta.clear();
+            v
+        };
+        let accurate = darkest(&mut app).expect("the art rendered");
+        assert!(accurate > 20, "accurately: a dark grey, {accurate}");
+        app.run("prefs.set", json!({"key": "blackOnScreen", "value": "rich"})).unwrap();
+        assert_eq!(darkest(&mut app), Some(0), "as rich black: jet black, drawn again");
+        app.run("prefs.set", json!({"key": "blackOnScreen", "value": "accurate"})).unwrap();
+        assert_eq!(darkest(&mut app), Some(accurate), "accurately again");
+    }
+
+    /// Performance › Real-time Drawing and Editing (#394): on (with GPU Performance), the art is
+    /// drawn again as a drag moves it; off, or with GPU Performance off, it stays drawn where it
+    /// was until the release while the selection's outline follows, then is drawn moved.
+    #[test]
+    fn real_time_drawing_off_draws_the_art_again_only_at_the_release() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+        app.session.execute("shape.rectangle", &json!({"x": 100, "y": 50, "width": 100, "height": 100})).unwrap();
+        app.canvas.worker_started = true; // render on this thread
+        let ctx = egui::Context::default();
+        frame(&mut app, &ctx, vec![]);
+        app.select_tool("selection");
+        let revisions = |app: &VectorcraftApp| (app.canvas.key.as_ref().unwrap().revision, app.session.active().unwrap().revision);
+        // Grab the square and drag it: → (what the canvas showed mid-drag, after the release).
+        let drag = |app: &mut VectorcraftApp| {
+            let view = app.view_info();
+            let ev = |kind, x| PointerEvent { kind, pos: Point::new(x, 100.0), mods: Mods::default(), pressure: 1.0 };
+            dispatch(app, &ev(PointerKind::Down, 150.0), view);
+            dispatch(app, &ev(PointerKind::Drag, 170.0), view);
+            dispatch(app, &ev(PointerKind::Drag, 190.0), view);
+            frame(app, &ctx, vec![]);
+            let during = revisions(app);
+            dispatch(app, &ev(PointerKind::Up, 190.0), view);
+            frame(app, &ctx, vec![]);
+            let after = revisions(app);
+            // Back where it was for the next drag.
+            app.run("edit.undo", json!({})).unwrap();
+            frame(app, &ctx, vec![]);
+            (during, after)
+        };
+        let ((shown, now), (after, done)) = drag(&mut app);
+        assert_eq!(shown, now, "on: the moved art is drawn while dragging");
+        assert_eq!(after, done);
+        app.run("prefs.set", json!({"key": "realTimeDrawing", "value": false})).unwrap();
+        frame(&mut app, &ctx, vec![]);
+        let before = revisions(&app).0;
+        let ((shown, now), (after, done)) = drag(&mut app);
+        assert!(shown == before && now != before, "off: the art stays as it was while dragging");
+        assert_eq!(after, done, "and is drawn moved at the release");
+        let selected = app.session.active().unwrap().selection.objects.len();
+        assert_eq!(selected, 1, "the selection, whose outline follows the drag, is the square");
+        // On, but with GPU Performance off: as off.
+        app.run("prefs.set", json!({"values": {"realTimeDrawing": true, "gpuPerformance": false}})).unwrap();
+        frame(&mut app, &ctx, vec![]);
+        let before = revisions(&app).0;
+        let ((shown, now), _) = drag(&mut app);
+        assert!(shown == before && now != before, "GPU Performance off: as off");
     }
 }

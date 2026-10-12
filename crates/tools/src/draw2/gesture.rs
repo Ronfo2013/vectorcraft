@@ -107,9 +107,9 @@ impl GestureTool {
     /// The Knife's straight cut with Alt held: the line from the press to the pointer, held to 45°
     /// steps with Shift (the shortcut reference, "Edit shapes"). None without Alt: the cut is the
     /// stroke.
-    fn straight_cut(&self) -> Option<[Point; 2]> {
+    fn straight_cut(&self, cx: &ToolContext) -> Option<[Point; 2]> {
         match (self.straight, self.points.first(), self.points.last()) {
-            (true, Some(&a), Some(&b)) => Some([a, a + crate::bbox::move_delta(a, b, self.constrain)]),
+            (true, Some(&a), Some(&b)) => Some([a, a + crate::bbox::move_delta(a, b, self.constrain, cx.constrain_angle)]),
             _ => None,
         }
     }
@@ -209,7 +209,7 @@ impl GestureTool {
             "blobBrush" => vec![Action::Exec("path.blob".into(), json!({"points": points_json(pts), "size": self.size}))],
             "eraser" => vec![Action::Exec("path.eraseRegion".into(), json!({"points": points_json(pts), "size": self.size}))],
             "knife" if pts.len() >= 2 => {
-                let points = self.straight_cut().map_or_else(|| points_json(pts), |line| points_json(&line));
+                let points = self.straight_cut(cx).map_or_else(|| points_json(pts), |line| points_json(&line));
                 vec![Action::Exec("path.knife".into(), json!({"points": points}))]
             }
             "smooth" if has_sel && pts.len() >= 2 => {
@@ -344,7 +344,7 @@ impl Tool for GestureTool {
             _ => 1.0,
         };
         let color = if self.id == "eraser" { [0x80, 0x80, 0x80] } else { FEEDBACK };
-        let line = self.straight_cut();
+        let line = self.straight_cut(cx);
         let points: &[Point] = line.as_ref().map_or(self.points.as_slice(), |l| l.as_slice());
         o.push(Overlay::Path { path: polyline(points), color, width, dashed: self.id == "knife" });
         o

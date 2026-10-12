@@ -126,8 +126,18 @@ pub(super) fn without_artboards(p: &Value) -> Value {
 
 /// `p` with the saved presets it names (PDF, flattener) written out as options, for the encoders,
 /// which know only the built-in ones.
+///
+/// Preferences › Appearance of Black › Printing / Exporting fills in `richBlack` when it isn't
+/// given: "Output All Blacks as Rich Black" exports black ink alone as jet black to RGB and
+/// greyscale files (only raster encoders read it).
 fn expand_presets<'a>(s: &Session, cmd: &str, p: &'a Value) -> Result<Cow<'a, Value>> {
-    super::pdf::expand_preset(s, cmd, p)
+    let p = super::pdf::expand_preset(s, cmd, p)?;
+    if s.prefs.black_output != "rich" || p.get("richBlack").is_some() || !p.is_object() {
+        return Ok(p);
+    }
+    let mut p = p.into_owned();
+    p["richBlack"] = json!(true);
+    Ok(Cow::Owned(p))
 }
 
 /// The document an export of `f` writes: the active one (see [`export_source`]), or for text

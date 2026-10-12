@@ -28,7 +28,6 @@ use vectorcraft_doc::{ImageBlob, Node, PlacedDocument};
 use vectorcraft_geom::{Affine, Rect};
 use vello_cpu::{Pixmap, RenderContext, kurbo, peniko};
 
-use crate::ink::Ink;
 use crate::{Frame, Renderer};
 
 /// The longest side of a cached bitmap (pixels); larger steps draw exactly.
@@ -263,7 +262,7 @@ fn mean_scale(a: Affine) -> f64 {
 impl Renderer {
     /// Draw placed document `p` in frame `f`: from a cached bitmap on screen, else exactly.
     pub(crate) fn draw_placed(&mut self, ctx: &mut RenderContext, f: &Frame, p: &PlacedDocument) {
-        let plain = f.ink == Ink::Display && !f.opts.outline && f.opts.proof.is_none() && !f.opts.overprint_preview;
+        let plain = f.ink.is_display() && !f.opts.outline && f.opts.proof.is_none() && !f.opts.overprint_preview;
         if f.opts.progressive_placed && plain && depth() == 0 && self.draw_placed_bitmap(ctx, f, p) {
             return;
         }

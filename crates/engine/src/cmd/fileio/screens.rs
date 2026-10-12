@@ -270,6 +270,15 @@ fn rows_of(s: &Session, p: &Value, preset: Option<&str>) -> Result<Vec<Row>> {
             }
         }
     }
+    // Appearance of Black › Printing / Exporting: "as Rich Black" for the raster rows that don't
+    // say otherwise.
+    if s.prefs.black_output == "rich" {
+        for r in rows.iter_mut().filter(|r| r.format.raster) {
+            if let Some(m) = r.options.as_object_mut() {
+                m.entry("richBlack").or_insert(Value::Bool(true));
+            }
+        }
+    }
     Ok(rows)
 }
 

@@ -8,7 +8,7 @@
 //! the dragged corner snap to Smart Guides ([`DrawSnap`]), hovering before the press too.
 
 use serde_json::{Value, json};
-use vectorcraft_geom::{Point, Rect};
+use vectorcraft_geom::{Affine, Point, Rect};
 
 use crate::guides::{DrawSnap, Leave, square};
 use crate::{Action, Cursor, Mods, Overlay, PointerEvent, PointerKind, Tool, ToolContext, ToolKey};
@@ -96,13 +96,23 @@ impl ShapeTool {
         match self.id {
             "polygon" | "star" => None,
             "lineSegment" => Some(Leave::segment(cx, start, m.shift)),
-            _ => Some(Leave::diagonal(start, m.shift)),
+            // With a Constrain Angle, Shift's square is taken along the rotated axes
+            // ([`Self::command_at`]), not the page's diagonal.
+            _ => Some(Leave::diagonal(start, m.shift && cx.constrain_angle == 0.0)),
         }
     }
 
     /// The command for a drag from `start` to `p` (snapped: a line's end already keeps Shift's
     /// angle).
     pub fn command(&self, start: Point, p: Point, m: Mods) -> (String, Value) {
+        self.command_at(start, p, m, 0.0)
+    }
+
+    /// [`Self::command`] with General › Constrain Angle `base` (degrees, counter-clockwise):
+    /// rectangles, rounded rectangles and ellipses are drawn along the x and y axes turned by it,
+    /// as the reference app draws new objects along the rotated axes
+    /// (<https://helpx.adobe.com/illustrator/desktop/manage-objects/arrange-objects/rotate-objects-by-specific-angles.html>).
+    pub fn command_at(&self, start: Point, p: Point, m: Mods, base: f64) -> (String, Value) {
         match self.id {
             "polygon" | "star" => {
                 let v = p - start;
@@ -123,9 +133,19 @@ impl ShapeTool {
                 ("shape.line".into(), json!({ "x1": a.x, "y1": a.y, "x2": b.x, "y2": b.y }))
             }
             _ => {
-                let r = drag_rect(start, p, m);
                 let cmd = if self.id == "ellipse" { "shape.ellipse" } else { "shape.rectangle" };
-                let mut v = json!({ "x": r.x0, "y": r.y0, "width": r.width(), "height": r.height() });
+                let mut v = if base == 0.0 || !base.is_finite() {
+                    let r = drag_rect(start, p, m);
+                    json!({ "x": r.x0, "y": r.y0, "width": r.width(), "height": r.height() })
+                } else {
+                    // The drag measured along the rotated axes: back into them, a box there, its
+                    // centre out again; the shape turns about its centre.
+                    let axes = Affine::rotate(-base.to_radians());
+                    let back = axes.inverse();
+                    let r = drag_rect(back * start, back * p, m);
+                    let c = axes * r.center();
+                    json!({ "x": c.x - r.width() / 2.0, "y": c.y - r.height() / 2.0, "width": r.width(), "height": r.height(), "rotation": -base })
+                };
                 if self.id == "roundedRectangle" {
                     v["radius"] = json!(self.corner_radius);
                 }
@@ -189,7 +209,7 @@ impl Tool for ShapeTool {
                     self.began = true;
                     out.push(Action::Begin(self.label().into()));
                 }
-                let (c, v) = self.command(s, ev.pos, ev.mods);
+                let (c, v) = self.command_at(s, ev.pos, ev.mods, cx.constrain_angle);
                 out.push(Action::Preview(c, v));
                 out
             }
@@ -207,7 +227,7 @@ impl Tool for ShapeTool {
             _ => vec![],
         }
     }
-    fn key(&mut self, _cx: &ToolContext, key: ToolKey, _mods: Mods) -> Vec<Action> {
+    fn key(&mut self, cx: &ToolContext, key: ToolKey, _mods: Mods) -> Vec<Action> {
         let Some(s) = self.start.filter(|_| self.began) else { return vec![] };
         let changed = match (self.id, key) {
             ("polygon", ToolKey::Up) => {
@@ -237,7 +257,7 @@ impl Tool for ShapeTool {
             _ => false,
         };
         if changed {
-            let (c, v) = self.command(s, self.last, self.mods);
+            let (c, v) = self.command_at(s, self.last, self.mods, cx.constrain_angle);
             vec![Action::Preview(c, v)]
         } else if key == ToolKey::Escape {
             self.start = None;
@@ -363,6 +383,20 @@ mod tests {
         let (c, v) = t.command(Point::new(0.0, 0.0), Point::new(10.0, 4.0), Mods { shift: true, alt: true, ..Default::default() });
         assert_eq!(c, "shape.ellipse");
         assert_eq!(v, json!({"x": -10.0, "y": -10.0, "width": 20.0, "height": 20.0}));
+    }
+
+    /// General › Constrain Angle: a Shift-drag squares along the turned axes, and the shape turns
+    /// by the angle about its centre.
+    #[test]
+    fn constrain_angle_squares_along_the_turned_axes() {
+        let t = ShapeTool::new("rectangle");
+        let shift = Mods { shift: true, ..Default::default() };
+        // 45°: the drag straight right is a diagonal of the turned axes, so a square on it.
+        let (_, v) = t.command_at(Point::new(0.0, 0.0), Point::new(20.0, 0.0), shift, 45.0);
+        let side = 20.0 / 2f64.sqrt();
+        let near = |k: &str, want: f64| (v[k].as_f64().unwrap() - want).abs() < 1e-9;
+        assert!(near("width", side) && near("height", side) && near("rotation", -45.0), "{v}");
+        assert!(near("x", 10.0 - side / 2.0) && near("y", -side / 2.0), "centred on the drag's middle: {v}");
     }
 
     #[test]
