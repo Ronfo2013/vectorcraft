@@ -3527,3 +3527,25 @@ lighting	Light	光源
 	Move Guide to Layer	將參考線移至圖層
 	Linux Display Server	Linux 顯示伺服器
 	X11 (XWayland)	X11 (XWayland)
+	Justification	齊行
+	Words Longer Than	單字長度超過
+	After First	前面至少
+	Before Last	後面至少
+	Hyphen Limit	連字符號連續行數
+	Hyphenation Zone	連字區
+	Hyphenate Capitalized Words	大寫開頭的單字連字
+	Word Spacing Minimum	單字間距 最小
+	Word Spacing Desired	單字間距 理想
+	Word Spacing Maximum	單字間距 最大
+	Letter Spacing Minimum	字母間距 最小
+	Letter Spacing Desired	字母間距 理想
+	Letter Spacing Maximum	字母間距 最大
+	Glyph Scaling Minimum	字符縮放 最小
+	Glyph Scaling Desired	字符縮放 理想
+	Glyph Scaling Maximum	字符縮放 最大
+	Auto Leading	自動行距
+	Single Word Justification	單一單字齊行
+	Full Justify	強制齊行
+	Align Left	靠左對齊
+	Align Center	置中對齊
+	Align Right	靠右對齊

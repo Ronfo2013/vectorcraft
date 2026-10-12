@@ -632,12 +632,19 @@ fn type_step(s: &mut Session, p: &Value) -> Result<Value> {
                     1.0
                 };
                 let mut runs = edit::slice_runs(&t.runs, a, b);
+                // Auto leading follows the paragraph's Justification › Auto Leading: the paragraph
+                // index at each run's start.
+                let plain = if matches!(step, Step::Leading) { t.plain_text() } else { String::new() };
+                let mut at = a;
                 for run in &mut runs {
+                    let para_index = plain.get(..at).map_or(0, |s| s.bytes().filter(|&c| c == b'\n').count());
+                    at += run.text.len();
                     let st = &mut run.style;
                     match step {
                         Step::Size => st.size = super::typecmd::local_type_value(t, st.size * points + inc, (0.1, 1296.0), false, C)?,
                         Step::Leading => {
-                            st.leading = Some(super::typecmd::local_type_value(t, st.effective_leading() * points + inc, (0.1, 5000.0), false, C)?);
+                            let leading = t.para_at(para_index).effective_leading(st);
+                            st.leading = Some(super::typecmd::local_type_value(t, leading * points + inc, (0.1, 5000.0), false, C)?);
                         }
                         Step::Tracking => st.tracking = (st.tracking + inc).clamp(-1000.0, 10000.0),
                         Step::Kerning => st.kerning = Some((st.kerning.unwrap_or(0.0) + inc).clamp(-1000.0, 10000.0)),

@@ -4152,3 +4152,25 @@ lighting	Light	Luz
 	Linux Display Server	Servidor de pantalla de Linux
 	X11 (XWayland)	X11 (XWayland)
 @msg	{PATCH} (over the size limit)	{PATCH} (por encima del límite de tamaño)
+	Justification	Justificación
+	Words Longer Than	Palabras con más de
+	After First	Después de las primeras
+	Before Last	Antes de las últimas
+	Hyphen Limit	Límite de guiones
+	Hyphenation Zone	Zona de separación
+	Hyphenate Capitalized Words	Separar palabras en mayúsculas
+	Word Spacing Minimum	Espaciado entre palabras mínimo
+	Word Spacing Desired	Espaciado entre palabras deseado
+	Word Spacing Maximum	Espaciado entre palabras máximo
+	Letter Spacing Minimum	Espaciado entre letras mínimo
+	Letter Spacing Desired	Espaciado entre letras deseado
+	Letter Spacing Maximum	Espaciado entre letras máximo
+	Glyph Scaling Minimum	Escala de glifos mínima
+	Glyph Scaling Desired	Escala de glifos deseada
+	Glyph Scaling Maximum	Escala de glifos máxima
+	Auto Leading	Interlineado automático
+	Single Word Justification	Justificación de palabra única
+	Full Justify	Justificar todo
+	Align Left	Alinear a la izquierda
+	Align Center	Centrar
+	Align Right	Alinear a la derecha
