@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use vectorcraft_doc::{AppearanceItem, Effect, Node, NodeKind};
 use vectorcraft_effects::{self as effects, GeomContext, RasterFx};
-use vectorcraft_geom::{Affine, BezPath, FillRule, Rect, Shape, Vec2};
+use vectorcraft_geom::{Affine, BezPath, FillRule, PathData, Rect, Shape, Vec2};
 use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
 use vello_cpu::RenderContext;
 use vello_cpu::peniko;
@@ -103,16 +103,70 @@ fn node_bezpath(n: &Node) -> Option<BezPath> {
     }
 }
 
-fn apply(effects: &[Effect], bp: &BezPath, ctx: &GeomContext) -> BezPath {
-    if !effects::has_geometry(effects) || bp.elements().is_empty() {
-        return bp.clone();
-    }
-    effects::apply_geometry_bez(effects, bp, bp.bounding_box(), ctx)
+/// Geometry one fill or stroke paints, with the item as painted there (`None`: as it is): the
+/// Transform effects' Scale Strokes & Effects and Transform Patterns change its stroke weight and
+/// pattern, differently on each copy ([`effects::Geometry::runs`]).
+type Run = (BezPath, Option<AppearanceItem>);
+
+/// A path after its object-level geometry effects.
+struct Effected {
+    /// What they make of it; `None` without any (the path as it is).
+    geo: Option<effects::Geometry>,
+    /// All of it as one path.
+    path: BezPath,
 }
 
-/// The object-level effected geometry of `n` (base path `bp`).
-pub(crate) fn effected_path(n: &Node, bp: &BezPath) -> BezPath {
-    apply(&n.appearance.effects, bp, &GeomContext::of(n))
+impl Effected {
+    fn of(n: &Node, bp: &BezPath, ctx: &GeomContext) -> Self {
+        if !effects::has_geometry(&n.appearance.effects) || bp.elements().is_empty() {
+            return Self { geo: None, path: bp.clone() };
+        }
+        let geo = effects::apply_geometry_full(&n.appearance.effects, &PathData::from_bezpath(bp), bp.bounding_box(), ctx);
+        let path = geo.path().to_bezpath();
+        Self { geo: Some(geo), path }
+    }
+
+    /// What `item` paints: its own geometry effects applied to the object's pieces (their stroke
+    /// scale reaching `path.outlineStroke` and their distances), as [`Run`]s.
+    fn runs(&self, item: &AppearanceItem, ctx: &GeomContext) -> Vec<Run> {
+        let fx = item_effects(item);
+        let own = effects::has_geometry(fx) && !self.path.elements().is_empty();
+        let geo = match (&self.geo, own) {
+            (None, false) => return vec![(self.path.clone(), None)],
+            (Some(g), false) => g.clone(),
+            (geo, true) => {
+                let pieces = geo.as_ref().map_or_else(|| vec![effects::Piece::plain(PathData::from_bezpath(&self.path))], |g| g.pieces.clone());
+                effects::apply_geometry_pieces(fx, pieces, self.path.bounding_box(), &ctx.item(item))
+            }
+        };
+        geo.runs(item).into_iter().map(|(p, it)| (p.to_bezpath(), it)).collect()
+    }
+
+    /// The runs of every fill and stroke of `n`, in its appearance's order.
+    fn all_runs(&self, n: &Node, ctx: &GeomContext) -> Vec<Vec<Run>> {
+        n.appearance.items.iter().map(|item| self.runs(item, ctx)).collect()
+    }
+}
+
+/// How far the strokes of `n` reach past their geometry, as `runs` paint them (strokes the
+/// Transform effect scales up reach further): at least the appearance's own outset.
+fn runs_outset(n: &Node, runs: &[Vec<Run>]) -> f64 {
+    let painted = |s: &vectorcraft_doc::StrokeLayer| s.visible && !s.paint.is_none();
+    n.appearance
+        .items
+        .iter()
+        .zip(runs)
+        .flat_map(|(item, runs)| runs.iter().map(move |(_, it)| it.as_ref().unwrap_or(item)))
+        .filter_map(|it| match it {
+            AppearanceItem::Stroke(s) if painted(s) => Some(s.reach()),
+            _ => None,
+        })
+        .fold(n.appearance.outset(), f64::max)
+}
+
+/// The bounds of all of `runs`' geometry.
+fn runs_bounds(runs: &[Run]) -> Option<Rect> {
+    runs.iter().filter(|(p, _)| !p.elements().is_empty()).map(|(p, _)| p.bounding_box()).reduce(|a, b| a.union(b))
 }
 
 fn item_effects(item: &AppearanceItem) -> &[Effect] {
@@ -132,19 +186,19 @@ pub(crate) fn visual_bounds(n: &Node) -> Option<Rect> {
     }
     let bp = node_bezpath(n)?;
     let ctx = GeomContext::of(n);
-    let g = effected_path(n, &bp);
+    let e = Effected::of(n, &bp, &ctx);
+    let g = &e.path;
     let mut r: Option<Rect> = (!g.elements().is_empty()).then(|| g.bounding_box());
-    for item in &n.appearance.items {
-        let fx = item_effects(item);
-        if effects::has_geometry(fx) {
-            let ig = apply(fx, &g, &ctx.item(item));
-            if !ig.elements().is_empty() {
-                let b = ig.bounding_box();
-                r = Some(r.map_or(b, |r| r.union(b)));
-            }
+    let runs = e.all_runs(n, &ctx);
+    for (item, runs) in n.appearance.items.iter().zip(&runs) {
+        if effects::has_geometry(item_effects(item))
+            && let Some(b) = runs_bounds(runs)
+        {
+            r = Some(r.map_or(b, |r| r.union(b)));
         }
     }
-    let s = n.appearance.outset();
+    // Strokes the Transform effect scales up (Scale Strokes & Effects) reach further.
+    let s = runs_outset(n, &runs);
     r.map(|r| {
         let r = r.inflate(s, s);
         let o = effects::outset(&n.appearance.effects, r);
@@ -340,21 +394,24 @@ impl Renderer {
 
     /// `draw_shape` for nodes with live effects.
     pub(crate) fn draw_shape_fx(&mut self, ctx: &mut RenderContext, f: &Frame, n: &Node, bp: &BezPath, rule: FillRule) {
-        let g = effected_path(n, bp);
+        let gctx = GeomContext::of(n);
+        let e = Effected::of(n, bp, &gctx);
+        let g = &e.path;
         if g.elements().is_empty() {
             return;
         }
         if f.opts.outline {
-            self.hairline(ctx, f, &g, [0, 0, 0, 255]);
+            self.hairline(ctx, f, g, [0, 0, 0, 255]);
             return;
         }
-        let gctx = GeomContext::of(n);
         let rfx = effects::raster_effects(&n.appearance.effects);
-        // Document-space reach of the painted geometry (strokes, arrowheads…).
-        let outset = n.appearance.outset();
+        let runs = e.all_runs(n, &gctx);
+        // Document-space reach of the painted geometry (strokes, arrowheads…; strokes the Transform
+        // effect scales up reach further).
+        let outset = runs_outset(n, &runs);
         let reach = g.bounding_box().inflate(outset, outset);
-        let content = Content { node: n, cache: Some(0), reach, outline: Some((&g, rule)) };
-        self.raster_fx(ctx, f, &content, &rfx, &mut |r, c, fr| r.paint_items(c, fr, n, &g, rule, &gctx));
+        let content = Content { node: n, cache: Some(0), reach, outline: Some((g, rule)) };
+        self.raster_fx(ctx, f, &content, &rfx, &mut |r, c, fr| r.paint_items(c, fr, n, g, &runs, outset, rule));
         ctx.set_transform(Affine::IDENTITY);
     }
 
@@ -698,32 +755,45 @@ impl Renderer {
 
     /// Paint the fills and strokes of `n` on geometry `g`, applying per-item geometry effects and
     /// painting per-item raster effects around that item alone.
-    fn paint_items(&mut self, ctx: &mut RenderContext, f: &Frame, n: &Node, g: &BezPath, rule: FillRule, gctx: &GeomContext) {
+    /// Paint the fills and strokes of `n` on the object's geometry `g`, each on its [`Run`]s
+    /// (`runs`, by item; `outset`: how far the strokes reach past them), with its raster effects.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_items(&mut self, ctx: &mut RenderContext, f: &Frame, n: &Node, g: &BezPath, runs: &[Vec<Run>], outset: f64, rule: FillRule) {
         let bounds = g.bounding_box();
-        for (j, item) in n.appearance.items.iter().enumerate() {
+        for (j, (item, runs)) in n.appearance.items.iter().zip(runs).enumerate() {
             if !item.visible() || item.paint().is_none() {
                 continue;
             }
-            let ig = apply(item_effects(item), g, &gctx.item(item));
-            let ib = if effects::has_geometry(item_effects(item)) && !ig.elements().is_empty() { ig.bounding_box() } else { bounds };
+            let ib = match runs_bounds(runs) {
+                Some(b) if effects::has_geometry(item_effects(item)) => b,
+                _ => bounds,
+            };
             let rfx = effects::raster_effects(item_effects(item));
             if rfx.is_empty() {
-                self.paint_item(ctx, f, n, item, &ig, rule, ib);
+                for (ig, it) in runs {
+                    self.paint_item(ctx, f, n, it.as_ref().unwrap_or(item), ig, rule, ib);
+                }
                 continue;
             }
-            // The item's silhouette: its fill area, or the outline of its stroke.
-            let outline = match item {
-                AppearanceItem::Fill(_) => ig.clone(),
-                AppearanceItem::Stroke(st) => {
-                    let w = effects::stroke::aligned_width(st, effects::stroke::is_closed(&ig));
-                    effects::stroke::line_outline(&effects::stroke::stroke_pieces(&ig, st).line, st, w, f.px * 0.25)
+            // The item's silhouette: its fill area, or the outline of its stroke (on every run).
+            let mut outline = BezPath::new();
+            for (ig, it) in runs {
+                match it.as_ref().unwrap_or(item) {
+                    AppearanceItem::Fill(_) => outline.extend(ig.iter()),
+                    AppearanceItem::Stroke(st) => {
+                        let w = effects::stroke::aligned_width(st, effects::stroke::is_closed(ig));
+                        outline.extend(effects::stroke::line_outline(&effects::stroke::stroke_pieces(ig, st).line, st, w, f.px * 0.25).iter());
+                    }
                 }
-            };
-            let outset = n.appearance.outset();
+            }
             let orule = if item.is_fill() { rule } else { FillRule::NonZero };
             // Each item's shadows get their own cache slots.
             let content = Content { node: n, cache: Some((j + 1) << 8), reach: ib.inflate(outset, outset), outline: Some((&outline, orule)) };
-            self.raster_fx(ctx, f, &content, &rfx, &mut |r, c, fr| r.paint_item(c, fr, n, item, &ig, rule, ib));
+            self.raster_fx(ctx, f, &content, &rfx, &mut |r, c, fr| {
+                for (ig, it) in runs {
+                    r.paint_item(c, fr, n, it.as_ref().unwrap_or(item), ig, rule, ib);
+                }
+            });
             ctx.set_transform(Affine::IDENTITY);
         }
     }

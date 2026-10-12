@@ -108,12 +108,13 @@ const MAX_MOVE: f64 = 1.0e7;
 /// The Transform effect's copies stop before one reaches further than this (pt) from the origin.
 const MAX_REACH: f64 = 1.0e9;
 
-/// Transform effect: scale, rotate and reflect about reference point `reference` of the bounds
-/// (the 9-point grid, 4 = centre), then move; `copies` more times, each from the last. With
-/// `random`, each scale goes a random share of the way from 100 % to its value and each move and
-/// the angle a share of theirs, drawn from `seed` (the object's), so an object keeps its result
-/// on every redraw while each object varies its own way.
-pub fn transform(path: &PathData, b: Rect, p: &Value, seed: u64) -> PathData {
+/// The one transformation of the Transform effect with parameters `p` on an object of bounds `b`:
+/// scale, rotate and reflect about reference point `reference` of the bounds (the 9-point grid,
+/// 4 = centre), then move. With `random`, each scale goes a random share of the way from 100 % to
+/// its value and each move and the angle a share of theirs, drawn from `seed` (the object's), so an
+/// object keeps its result on every redraw while each object varies its own way. Each copy
+/// applies it again to the last.
+pub fn transform_affine(b: Rect, p: &Value, seed: u64) -> Affine {
     let random = flag(p, "random", false);
     // The share (0..1) of value `k` applied.
     let share = |k: u64| if random { (noise(seed, k, 0, 0) + 1.0) / 2.0 } else { 1.0 };
@@ -122,23 +123,53 @@ pub fn transform(path: &PathData, b: Rect, p: &Value, seed: u64) -> PathData {
     let reflect = |key: &str| if flag(p, key, false) { -1.0 } else { 1.0 };
     let o = vectorcraft_geom::reference_point(b, num(p, "reference", 4.0).clamp(0.0, 8.0) as usize).to_vec2();
     // Reflect X flips the x coordinates (left to right), Reflect Y the y coordinates.
-    let m = Affine::translate(Vec2::new(moved("moveH", 2), moved("moveV", 3)) + o)
+    Affine::translate(Vec2::new(moved("moveH", 2), moved("moveV", 3)) + o)
         * Affine::rotate(-(num(p, "rotate", 0.0) * share(4)).to_radians())
         * Affine::scale_non_uniform(scale("scaleH", 0) * reflect("reflectX"), scale("scaleV", 1) * reflect("reflectY"))
-        * Affine::translate(-o);
-    let copies = num(p, "copies", 0.0).clamp(0.0, 1000.0) as usize;
+        * Affine::translate(-o)
+}
+
+/// Does the Transform effect `p` move its object's geometry (Transform Objects, default on)? Off,
+/// it only transforms the pattern fills and strokes (Transform Patterns) and scales the strokes
+/// (Scale Strokes & Effects), see [`crate::apply_geometry_full`].
+pub fn transforms_objects(p: &Value) -> bool {
+    flag(p, "objects", true)
+}
+
+/// The pieces the Transform effect makes of `path`, each with how many times [`transform_affine`]
+/// applies to it (the power its stroke scale and pattern move take): without copies the path
+/// transformed once (`1`); with `copies`, the original (`0`) then each copy from the last (`1`, `2`,
+/// …), stopping before one reaches past [`MAX_REACH`]. With Transform Objects off the geometry
+/// stays (one piece, still `1`: the options for patterns and strokes apply once).
+pub fn transform_steps(path: &PathData, b: Rect, p: &Value, seed: u64) -> Vec<(PathData, u32)> {
+    if !transforms_objects(p) {
+        return vec![(path.clone(), 1)];
+    }
+    let m = transform_affine(b, p, seed);
+    let copies = num(p, "copies", 0.0).clamp(0.0, 1000.0) as u32;
     if copies == 0 {
-        return path.transformed(m);
+        return vec![(path.transformed(m), 1)];
     }
     let within = |r: Rect| [r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.abs() <= MAX_REACH);
-    let mut out = path.clone();
+    let mut out = vec![(path.clone(), 0)];
     let mut cur = path.clone();
-    for _ in 0..copies {
+    for k in 1..=copies {
         cur = cur.transformed(m);
         if !cur.bounds().is_some_and(within) {
             break;
         }
-        out.subpaths.extend(cur.subpaths.iter().cloned());
+        out.push((cur.clone(), k));
+    }
+    out
+}
+
+/// Transform effect: [`transform_affine`] applied to the geometry, then `copies` more times, each
+/// from the last (the copies are added to the result). Nothing with Transform Objects off.
+pub fn transform(path: &PathData, b: Rect, p: &Value, seed: u64) -> PathData {
+    let mut steps = transform_steps(path, b, p, seed).into_iter();
+    let Some((mut out, _)) = steps.next() else { return path.clone() };
+    for (piece, _) in steps {
+        out.subpaths.extend(piece.subpaths);
     }
     out
 }

@@ -563,6 +563,13 @@ fn is_hundreds(v: &(f64, f64)) -> bool {
 }
 
 impl StrokeLayer {
+    /// Scale the weight, dash lengths and dash offset by `s` (Scale Strokes & Effects).
+    pub fn scale(&mut self, s: f64) {
+        self.width *= s;
+        if let Some(d) = &mut self.dash {
+            d.scale(s);
+        }
+    }
     pub fn new(paint: Paint, width: f64) -> Self {
         Self {
             paint,
@@ -714,6 +721,19 @@ impl AppearanceItem {
         match self {
             AppearanceItem::Fill(f) => &mut f.effects,
             AppearanceItem::Stroke(s) => &mut s.effects,
+        }
+    }
+    /// Scale a stroke's weight, dash lengths and dash offset by `s` (Scale Strokes & Effects); a
+    /// fill stays as it is.
+    pub fn scale_stroke(&mut self, s: f64) {
+        if let AppearanceItem::Stroke(st) = self {
+            st.scale(s);
+        }
+    }
+    /// Apply `m` to the placement of a pattern paint (Transform Patterns); other paints stay.
+    pub fn transform_pattern(&mut self, m: vectorcraft_geom::Affine) {
+        if let Paint::Pattern { xf, .. } = self.paint_mut() {
+            *xf = m * *xf;
         }
     }
     /// Whether this fill or stroke overprints.
@@ -917,12 +937,7 @@ impl Appearance {
     /// Scale stroke weights, dash lengths and dash offsets (Scale Strokes & Effects).
     pub fn scale_strokes(&mut self, s: f64) {
         for i in &mut self.items {
-            if let AppearanceItem::Stroke(st) = i {
-                st.width *= s;
-                if let Some(d) = &mut st.dash {
-                    d.scale(s);
-                }
-            }
+            i.scale_stroke(s);
         }
     }
     /// Scale the distance parameters of every effect (the object's and each fill's and stroke's)

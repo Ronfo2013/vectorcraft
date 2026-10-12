@@ -1,6 +1,6 @@
 # Effects parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Zig Zag's dialog with sliders and radio buttons, #1133; earlier: Brush Strokes landed) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options, its checkboxes drawn, #885; Zig Zag's dialog with sliders and radio buttons, #1133; earlier: Brush Strokes landed) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every entry of Illustrator's Effect menu, by its public feature name, against VectorCraft's effects catalogue
 (`effect_catalog()` in `crates/effects/src/lib.rs`) and the Effect menu built from it
@@ -22,7 +22,7 @@ Part of [target-app-parity.md](target-app-parity.md); open work is in [gaps.md](
 |---|---|---:|---|
 | Convert to Shape | Rectangle, Rounded Rectangle, Ellipse | 3/3 | — |
 | Crop Marks | Crop Marks | 1/1 | — |
-| Distort & Transform | Free Distort, Pucker & Bloat, Roughen, Transform, Tweak, Twist, Zig Zag | 7/7 | Transform's Transform Objects/Patterns and Scale Strokes & Effects options, invisible Reflect checkboxes (#885) |
+| Distort & Transform | Free Distort, Pucker & Bloat, Roughen, Transform, Tweak, Twist, Zig Zag | 7/7 | — (Transform's Transform Objects, Transform Patterns and Scale Strokes & Effects options and its checkboxes landed, #885; Scale Strokes & Effects scales the stroke weights and dashes, copy k k times, and the distances of the geometry effects after it (object, fill and stroke lists, on paths, groups and type); the raster effects (shadows, glows, blur, feather) keep their distances) |
 | Path | Offset Path, Outline Object, Outline Stroke | 2/3 | Outline Object |
 | Pathfinder | Add, Intersect, Exclude, Subtract, Minus Back, Divide, Trim, Merge, Crop, Outline, Hard Mix, Soft Mix, Trap | 10/13 | Hard Mix, Soft Mix, Trap |
 | Rasterize | Rasterize… (as a live effect) | 0/1 | the live effect (Object › Rasterize exists) |
@@ -72,6 +72,7 @@ rendering, Turntable, 3D export) is 45–75 h, still the largest single gap.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | The Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options (rendered, Expand Appearance, dialog, MCP), its Options checkboxes drawn in the dialog (#885) |
 | 2026-10-11 | minor | Zig Zag's dialog: Size and Ridges per segment sliders, Points as Smooth / Corner radio buttons (#1133) |
 | 2026-10-11 | minor | Brush Strokes landed (8 filters): 28/57 Photoshop effects |
 | 2026-10-10 | minor | Initial Revolve landed (#846) |

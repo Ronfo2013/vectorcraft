@@ -137,7 +137,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     let changed = match vectorcraft_plugins::effect::installed(&id) {
         Some(plugin) => form::schema_fields(ui, d, &plugin.manifest().params),
         None if vectorcraft_effects::is_adjustment(&id) => adjust_fields(ui, d),
-        None if id == TRANSFORM => transform_fields(ui, d, app.session.general_unit()),
+        None if id == vectorcraft_effects::TRANSFORM => transform_fields(ui, d, app.session.general_unit()),
         None if id == ZIG_ZAG => zig_zag_fields(ui, d, app.session.general_unit()),
         None => {
             let doc = vectorcraft_effects::effect_info(&id).map(|e| e.params).unwrap_or_default();
@@ -289,11 +289,9 @@ fn values_changed(d: &mut Dialog) -> bool {
     changed
 }
 
-/// The Transform effect (Effect › Distort & Transform › Transform…).
-const TRANSFORM: &str = "distort.transform";
-
 /// The Transform effect's dialog: Transform Each's Scale and Move sliders and Rotate dial, then
-/// Copies, the reflections, the reference point and Random. Returns whether the values differ from
+/// the options Transform Objects, Transform Patterns and Scale Strokes & Effects (#885), the
+/// reflections, the reference point, Random and Copies. Returns whether the values differ from
 /// those last previewed.
 fn transform_fields(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Unit) -> bool {
     ui.horizontal_top(|ui| {
@@ -302,13 +300,16 @@ fn transform_fields(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Un
         ui.vertical(|ui| {
             widgets::subheader(ui, tl!("Options"));
             ui.add_space(4.0);
+            form::check(ui, d, "objects", tl!("Transform Objects"));
+            form::check(ui, d, "patterns", tl!("Transform Patterns"));
+            form::check(ui, d, "strokes", tl!("Scale Strokes & Effects"));
+            transform_each::reflect_options(ui, d);
             ui.horizontal(|ui| {
                 widgets::dim_label(ui, tl!("Copies:"));
                 if let Some(n) = widgets::range_field(ui, "fx-copies", d.f64("copies", 0.0), 0.0..=1000.0, "", 0, 50.0) {
                     d.fields.insert("copies".into(), json!(n));
                 }
             });
-            transform_each::reflect_options(ui, d);
         });
     });
     values_changed(d)

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use vectorcraft_doc::{Appearance, AppearanceItem, Effect, Node, NodeKind};
 use vectorcraft_geom::{FillRule, PathData, Rect, shapes};
 
-use crate::{GeomContext, apply_one, is_geometry, merged_params};
+use crate::{GeomContext, Piece, is_geometry, step_pieces};
 
 /// Can object-level effects apply to `n` only through [`outline_art`] / an offscreen layer (it is
 /// neither a path nor a container)?
@@ -197,18 +197,71 @@ pub(crate) fn geometry_effects(n: &Node) -> Vec<&Effect> {
 }
 
 /// Apply `fx` to every path under `art` as one piece: each effect takes the whole art's bounds as
-/// its reference box and the art's seed (a random Transform moves the pieces together).
+/// its reference box and the art's seed (a random Transform moves the pieces together). Each
+/// leaf's strokes and pattern paints change as the Transform effects' Scale Strokes & Effects and
+/// Transform Patterns ask ([`Piece`]); a leaf whose copies change them differently becomes a group
+/// of one path per copy ([`set_pieces`]).
 pub(crate) fn reshape_leaves(art: &mut Node, fx: &[&Effect]) {
     let seed = art.id.0;
+    // Every leaf's pieces, in `for_each_leaf` order. The leaves stay paths (their geometry all
+    // their pieces') until the end, so the order holds and the art's bounds stay right.
+    let mut leaves: Vec<(Vec<Piece>, FillRule)> = vec![];
+    for_each_leaf(art, &mut |leaf| {
+        if let Some((path, rule)) = leaf_geometry(leaf) {
+            leaves.push((vec![Piece::plain(path)], rule));
+        }
+    });
     for e in fx {
         let Some(bounds) = art.geometric_bounds() else { break };
-        let params = merged_params(&e.id, &e.params);
+        let mut at = 0;
         for_each_leaf(art, &mut |leaf| {
-            let Some((path, rule)) = leaf_geometry(leaf) else { return };
-            let out = apply_one(&e.id, &params, &path, bounds, &GeomContext { seed, ..GeomContext::of(leaf) });
-            set_geometry(leaf, out, rule);
+            if leaf_geometry(leaf).is_none() {
+                return;
+            }
+            if let Some((pieces, rule)) = leaves.get_mut(at) {
+                let ctx = GeomContext { seed, ..GeomContext::of(leaf) };
+                *pieces = step_pieces(e, std::mem::take(pieces), bounds, &ctx);
+                let all = PathData::new(pieces.iter().flat_map(|p| p.path.subpaths.iter().cloned()).collect());
+                set_geometry(leaf, all, *rule);
+            }
+            at += 1;
         });
     }
+    let mut leaves = leaves.into_iter();
+    for_each_leaf(art, &mut |leaf| {
+        if leaf_geometry(leaf).is_none() {
+            return;
+        }
+        if let Some((pieces, rule)) = leaves.next() {
+            set_pieces(leaf, pieces, rule);
+        }
+    });
+}
+
+/// Give path or compound `n` the geometry of `pieces`: one piece reshapes it and changes its
+/// strokes and patterns as the piece asks; several (copies changing them differently) turn it
+/// into a group of one such path per piece, the group keeping `n`'s transparency.
+pub(crate) fn set_pieces(n: &mut Node, pieces: Vec<Piece>, rule: FillRule) {
+    let mut pieces = pieces;
+    if pieces.len() == 1
+        && let Some(one) = pieces.pop()
+    {
+        one.adjust_node(n);
+        set_geometry(n, one.path, rule);
+        return;
+    }
+    let children = pieces
+        .into_iter()
+        .map(|p| {
+            let mut c = Node { opacity: 1.0, blend: Default::default(), mask: None, ..n.clone() };
+            p.adjust_node(&mut c);
+            set_geometry(&mut c, p.path, rule);
+            Arc::new(c)
+        })
+        .collect();
+    let mut g = Node::group(n.id, children);
+    (g.name, g.opacity, g.blend, g.mask) = (n.name.clone(), n.opacity, n.blend, n.mask.take());
+    *n = g;
 }
 
 /// `n` with type anywhere inside it outlined and live objects evaluated, so geometry effects on

@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every known shortfall against Illustrator, one entry each, **ranked by how much it stops a professional from
 switching**. This is the work list: unless you were given a task, pick the highest-ranked gap you can make
@@ -115,7 +115,19 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
   Bezier drag previews no longer freeze (#834): a Pen, Anchor Point or Direct Selection drag gets every
   position the pointer is seen at, including the one after it left the window and came back and the one in
   the frame it lets go, so what the release commits is where the pointer let go.
-- **Missing:** Shape Builder on the reporter's own file (#937, until confirmed on it); Transform effect dialog's invisible checkboxes and missing options (#885);
+  The Transform effect (#885): Transform Objects, Transform Patterns and Scale Strokes & Effects as effect parameters
+  (`objects`, `patterns`, `strokes`; old files unchanged), drawn live (stroke weights and dashes scale by √|scaleH·scaleV|,
+  pattern paints follow the effect's transformation, with copies the original keeping its own and copy k taking them k
+  times; the geometry stays with Transform Objects off; Outline Stroke and the other geometry effects after it, in the
+  object's list and in its fills' and strokes', take the scaled weight and distances), on paths, groups, layers and type
+  alike, baked the same way by Expand Appearance and export, in the dialog as checkboxes beside Reflect X/Y, the
+  reference locator, Random and Copies. The "invisible"
+  checkboxes measured: an unchecked box was drawn, but its `button_border` outline sat at 1.6:1 against the Medium Dark
+  panel (1.6–2.5:1 across the four brightnesses, under the 3:1 a control's outline needs); every checkbox and radio at
+  rest now outlines in `text_dim` (3.5–7.6:1), with headless frame tests for the contrast in each brightness and for
+  each Options box being painted beside its label inside the dialog's clip.
+- **Missing:** Shape Builder on the reporter's own file (#937, until confirmed on it); the Transform effect's Scale Strokes
+  & Effects doesn't scale the distances of raster effects (shadows, glows, blur, feather) after it, which keep theirs;
   PDF text boxes moving on open (#722).
 - **Impact:** wrong output in everyday work.
 - **Estimate:** 8–15 h.
@@ -235,6 +247,7 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 | 2026-10-12 | minor | G9: gradient meshes read from `.ai` editing data; the user's Illustrator 30.8 file opens whole; estimate unchanged |
 | 2026-10-11 | minor | G9: a real Illustrator 30.8 file opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared with its page); next: read gradient meshes; estimate unchanged |
 | 2026-10-11 | minor | G9: layer structure of the editing data audited and property-tested; PDF layers repeated per page merged; unreadable private data named in the notes (#951, #868, #779, #758); estimate unchanged, needs the users' files |
+| 2026-10-11 | minor | G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options (effect parameters, rendering, Expand Appearance, dialog, command docs) and its dialog's Options checkboxes drawn (#885); estimate unchanged, #937 open |
 | 2026-10-11 | minor | G11: Shape Builder on art of thousands of segments (traced outlines, type outlines): lines cut it again past 4096 segments, where the planar map used to give up and the tool offered whole shapes (#937's reproduced case; the map's edge-source lookup was quadratic, now indexed, and the cap is 65 536); estimate unchanged until confirmed on the reporter's file |
 | 2026-10-11 | minor | G4: proportional vertical metrics (#966) done; estimate unchanged |
 | 2026-10-11 | minor | G11: #893 fixed (merged regions of crossing lines left seams); #937 still open, estimate unchanged |
