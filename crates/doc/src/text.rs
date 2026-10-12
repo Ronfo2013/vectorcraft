@@ -494,8 +494,8 @@ impl From<ParaStyleFile> for ParaStyle {
             leading_model,
             burasagari,
             kinsoku,
-            hyphenation,
-            justification,
+            hyphenation: hyphenation.clamped(),
+            justification: justification.clamped(),
         }
     }
 }
@@ -518,6 +518,7 @@ pub struct Hyphenation {
     /// Hyphenation Zone (points): with the Single-line Composer, a word whose line could already
     /// end this close to the right edge goes whole to the next line instead of being hyphenated
     /// (0: hyphenate wherever it fits).
+    #[serde(deserialize_with = "lenient_f64")]
     pub zone: f64,
     /// Hyphenate Capitalized Words: off, a word starting with a capital letter never breaks.
     pub capitalized: bool,
@@ -551,13 +552,27 @@ impl Hyphenation {
     }
 }
 
-/// A Minimum / Desired / Maximum triple of the Justification dialog, in percent.
+/// A Minimum / Desired / Maximum triple of the Justification dialog, in percent. A value missing
+/// from a file (or written as `null`) loads as NaN, which [`SpacingRange::clamped`] replaces with
+/// the field's default.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpacingRange {
+    #[serde(default = "nan", deserialize_with = "lenient_f64")]
     pub min: f64,
+    #[serde(default = "nan", deserialize_with = "lenient_f64")]
     pub desired: f64,
+    #[serde(default = "nan", deserialize_with = "lenient_f64")]
     pub max: f64,
+}
+
+fn nan() -> f64 {
+    f64::NAN
+}
+
+/// A number, or NaN for `null` (JSON writes a non-finite number as `null`).
+fn lenient_f64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    Ok(Option::<f64>::deserialize(d)?.unwrap_or(f64::NAN))
 }
 
 impl SpacingRange {
@@ -577,13 +592,30 @@ impl SpacingRange {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SingleWordJustify {
-    /// Spread across the line: letter spacing and glyph scaling within their limits, then evenly
-    /// between the letters.
+    /// Paragraphs from before the option (a file without it): a single word spreads only in
+    /// Justify All Lines and otherwise starts at the left edge, as VectorCraft always set it, so
+    /// old files keep their layout. Never offered as a choice; the dialog shows the choice it
+    /// looks like ([`SingleWordJustify::effective`]).
     #[default]
+    Legacy,
+    /// Spread across the line: letter spacing and glyph scaling within their limits, then evenly
+    /// between the letters. New type gets this.
     FullJustify,
     AlignLeft,
     AlignCenter,
     AlignRight,
+}
+
+impl SingleWordJustify {
+    /// The choice this setting looks like in a paragraph aligned `justify` ([`Self::Legacy`]
+    /// reads as Full Justify in Justify All Lines, Align Left otherwise).
+    pub fn effective(self, justify: Justify) -> Self {
+        match self {
+            Self::Legacy if justify == Justify::JustifyAll => Self::FullJustify,
+            Self::Legacy => Self::AlignLeft,
+            other => other,
+        }
+    }
 }
 
 /// Paragraph panel menu › Justification… ("Adjust word and letterspacing in justified text",
@@ -600,6 +632,7 @@ pub struct Justification {
     /// Glyph Scaling, % of each character's width (50–200).
     pub glyph_scaling: SpacingRange,
     /// Auto Leading, % of the type size (0–500): the leading of characters whose leading is Auto.
+    #[serde(deserialize_with = "lenient_f64")]
     pub auto_leading: f64,
     /// Single Word Justification.
     pub single_word: SingleWordJustify,
@@ -615,7 +648,7 @@ impl Default for Justification {
             letter_spacing: Self::LETTER_DEFAULT,
             glyph_scaling: Self::GLYPH_DEFAULT,
             auto_leading: Self::AUTO_LEADING_DEFAULT,
-            single_word: SingleWordJustify::FullJustify,
+            single_word: SingleWordJustify::Legacy,
         }
     }
 }
@@ -649,6 +682,23 @@ impl Justification {
     /// The leading of `size`-point type whose leading is Auto.
     pub fn auto_leading_for(&self, size: f64) -> f64 {
         size * self.auto_leading / 100.0
+    }
+}
+
+impl ParaStyle {
+    /// The leading of `st`'s characters in this paragraph: their own, or for Auto leading the
+    /// paragraph's Justification › Auto Leading percentage of their size (exactly
+    /// [`CharStyle::effective_leading`] at the default 120 %).
+    pub fn effective_leading(&self, st: &CharStyle) -> f64 {
+        if st.leading.is_some() {
+            return st.effective_leading();
+        }
+        let j = self.justification.clamped();
+        if j.auto_leading == Justification::AUTO_LEADING_DEFAULT {
+            return st.effective_leading();
+        }
+        let l = j.auto_leading_for(st.size);
+        if l.is_finite() { l } else { st.effective_leading() }
     }
 }
 

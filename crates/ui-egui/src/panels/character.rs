@@ -57,14 +57,20 @@ pub(crate) fn first_selected_text(app: &VectorcraftApp) -> Option<&vectorcraft_d
 /// caret's style at a caret), else every run of the selected type, groups' included. `None` (a
 /// blank field) where they differ, or with no type.
 pub(crate) fn shared<T: PartialEq>(app: &VectorcraftApp, f: impl Fn(&CharStyle) -> T) -> Option<T> {
-    shared_styles(app, |_, style| Some(f(style)))
+    shared_styles(app, |_, _, style| Some(f(style)))
 }
 
 /// Dimensional controls use document units and tolerate arithmetic roundoff when comparing
 /// compensated runs. Keep raw styles available to font/paragraph controls and style definitions,
 /// even if a collapsed affine prevents editing dimensions.
 fn shared_effective(app: &VectorcraftApp, f: impl Fn(&CharStyle) -> f64) -> Option<f64> {
-    shared_styles(app, |t, style| t.effective_char_style(style).map(|s| Metric(f(&s)))).map(|v| v.0)
+    shared_styles(app, |t, _, style| t.effective_char_style(style).map(|s| Metric(f(&s)))).map(|v| v.0)
+}
+
+/// The leading shown: each character's own, or for Auto leading its paragraph's Justification ›
+/// Auto Leading percentage of its size.
+fn shared_leading(app: &VectorcraftApp) -> Option<f64> {
+    shared_styles(app, |t, para, style| t.effective_char_style(style).map(|s| Metric(para.effective_leading(&s)))).map(|v| v.0)
 }
 
 struct Metric(f64);
@@ -75,31 +81,47 @@ impl PartialEq for Metric {
     }
 }
 
-fn shared_styles<T: PartialEq>(app: &VectorcraftApp, f: impl Fn(&vectorcraft_doc::TextObject, &CharStyle) -> Option<T>) -> Option<T> {
+/// `f` of each style in the selection (with its text object and the paragraph its run starts in).
+fn shared_styles<T: PartialEq>(
+    app: &VectorcraftApp,
+    f: impl Fn(&vectorcraft_doc::TextObject, &vectorcraft_doc::ParaStyle, &CharStyle) -> Option<T>,
+) -> Option<T> {
     let st = app.session.active()?;
     let text = |id: NodeId| match st.doc.node(id).map(|n| &n.kind) {
         Some(NodeKind::Text(t)) => Some(t),
         _ => None,
     };
+    // Each run with the byte range it covers and the index of the paragraph it starts in.
+    fn runs(t: &vectorcraft_doc::TextObject) -> Vec<(usize, usize, usize, &vectorcraft_doc::TextRun)> {
+        let (mut end, mut para) = (0, 0);
+        t.runs
+            .iter()
+            .map(|r| {
+                let (start, p) = (end, para);
+                end += r.text.len();
+                para += r.text.bytes().filter(|&c| c == b'\n').count();
+                (start, end, p, r)
+            })
+            .collect()
+    }
     let mut acc = Shared::None;
     if let Some((id, a, b)) = text_editing(app) {
         let t = text(id)?;
         if b <= a {
-            return f(t, &vectorcraft_text::edit::insertion_style(&t.runs, a, b));
+            let plain = t.plain_text();
+            let para = plain.get(..a).map_or(0, |s| s.bytes().filter(|&c| c == b'\n').count());
+            return f(t, t.para_at(para), &vectorcraft_text::edit::insertion_style(&t.runs, a, b));
         }
-        let mut end = 0;
-        for r in &t.runs {
-            let start = end;
-            end += r.text.len();
+        for (start, end, para, r) in runs(t) {
             if start < b && end > a {
-                acc.add(f(t, &r.style));
+                acc.add(f(t, t.para_at(para), &r.style));
             }
         }
     } else {
         for n in st.selection.objects.iter().filter_map(|id| st.doc.node(*id)) {
             n.walk(&mut |c| {
                 if let NodeKind::Text(t) = &c.kind {
-                    t.runs.iter().for_each(|r| acc.add(f(t, &r.style)));
+                    runs(t).into_iter().for_each(|(_, _, para, r)| acc.add(f(t, t.para_at(para), &r.style)));
                 }
             });
         }
@@ -438,7 +460,7 @@ pub(crate) fn metrics_grid(app: &mut VectorcraftApp, ui: &mut Ui, id: &str, s: &
     egui::Grid::new(id).num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
         cell(ui, "T", tl!("Font Size"), |ui| size_field(app, ui, "ch-size", fw));
         cell(ui, "A↕", tl!("Leading"), |ui| {
-            let leading = shared_effective(app, CharStyle::effective_leading);
+            let leading = shared_leading(app);
             let auto = shared(app, |s| s.leading.is_none()) == Some(true);
             match widgets::spin_field_auto(ui, "ch-lead", leading, Some(auto), unit, fw, 1.0, 0.1, &SIZE_PRESETS) {
                 Some(SpinPick::Value(v)) => style(app, json!({"leading": v})),
@@ -699,12 +721,24 @@ mod tests {
         app.run("text.setFormat", json!({"hScale": 130, "baselineShift": 3})).unwrap();
         for (actual, expected) in [
             (shared_effective(&app, |s| s.size), 7.0),
-            (shared_effective(&app, CharStyle::effective_leading), 9.0),
+            (shared_leading(&app), 9.0),
             (shared_effective(&app, |s| s.h_scale), 130.0),
             (shared_effective(&app, |s| s.baseline_shift), 3.0),
         ] {
             assert!((actual.expect("equal dimensions must not be mixed") - expected).abs() < 1e-8);
         }
+    }
+
+    #[test]
+    fn auto_leading_shows_the_paragraphs_auto_leading() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 300, "height": 200})).unwrap();
+        let a = app.run("text.create", json!({"x": 20, "y": 50, "text": "Axis", "size": 10})).unwrap()["id"].clone();
+        app.run("select.set", json!({"ids": [a]})).unwrap();
+        assert!((shared_leading(&app).unwrap() - 12.0).abs() < 1e-9);
+        app.run("text.justification", json!({"autoLeading": 200})).unwrap();
+        assert!((shared_leading(&app).unwrap() - 20.0).abs() < 1e-9);
+        assert_eq!(shared(&app, |s| s.leading.is_none()), Some(true), "still Auto");
     }
 
     #[test]

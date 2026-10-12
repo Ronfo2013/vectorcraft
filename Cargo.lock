@@ -4634,6 +4634,7 @@ dependencies = [
  "vectorcraft-doc",
  "vectorcraft-geom",
  "vectorcraft-testkit",
+ "vectorcraft-text",
 ]
 
 [[package]]
@@ -4809,6 +4810,7 @@ dependencies = [
  "harfrust 0.13.3",
  "kurbo 0.13.1",
  "log",
+ "serde_json",
  "skrifa 0.47.0",
  "subsetter",
  "unicode-bidi",

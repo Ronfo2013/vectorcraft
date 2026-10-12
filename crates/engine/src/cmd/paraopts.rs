@@ -33,11 +33,24 @@ pub fn specs() -> Vec<CommandSpec> {
             "Justification",
             [],
             None,
-            "{ids?|id?, start?: byte, end?: byte, wordSpacingMin?, wordSpacingDesired?, wordSpacingMax?: % of a space (0–1000), letterSpacingMin?, letterSpacingDesired?, letterSpacingMax?: % of a space added between letters (-100–500), glyphScalingMin?, glyphScalingDesired?, glyphScalingMax?: % of the glyphs' width (50–200), autoLeading?: % of the type size (0–500; leading of characters whose leading is Auto), singleWordJustification?: fullJustify|alignLeft|alignCenter|alignRight (a justified line holding one word)} set the paragraphs' Justification options: Desired spacing applies to every line, justified lines stretch or shrink within Minimum and Maximum (word spacing first, then letter spacing, then glyph scaling); a Desired outside Minimum or Maximum moves them; no option → the first target paragraph's values",
+            "{ids?|id?, start?: byte, end?: byte, wordSpacingMin?, wordSpacingDesired?, wordSpacingMax?: % of a space (0–1000), letterSpacingMin?, letterSpacingDesired?, letterSpacingMax?: % of a space added between letters (-100–500), glyphScalingMin?, glyphScalingDesired?, glyphScalingMax?: % of the glyphs' width (50–200), autoLeading?: % of the type size (0–500; leading of characters whose leading is Auto), singleWordJustification?: fullJustify|alignLeft|alignCenter|alignRight (a justified line holding one word)} set the paragraphs' Justification options: Desired spacing applies to every line, justified lines stretch or shrink within Minimum and Maximum (word spacing first, then letter spacing, then glyph scaling); values given together must be in order (Minimum ≤ Desired ≤ Maximum), and one given alone moves the paragraph's others to keep that order; no option → the first target paragraph's values (singleWordJustification of a paragraph from before the option: how it is set, fullJustify in Justify All Lines, else alignLeft)",
             has_doc,
             justification
         ),
     ]
+}
+
+/// The target parameters both commands take besides their options.
+const TARGET_KEYS: [&str; 4] = ["ids", "id", "start", "end"];
+
+/// An error for a parameter that is neither a target nor one of `options` (a misspelt option
+/// would otherwise be a silent query).
+fn reject_unknown(p: &Value, options: &[&str], cmd: &str) -> Result<()> {
+    let Some(o) = p.as_object() else { return Ok(()) };
+    match o.keys().find(|k| !TARGET_KEYS.contains(&k.as_str()) && !options.contains(&k.as_str())) {
+        Some(k) => Err(bad(cmd, format!("unknown parameter `{k}`"))),
+        None => Ok(()),
+    }
 }
 
 /// Option `k` of `p` as a number within `limits` (None: not given).
@@ -113,6 +126,7 @@ const HYPHENATION_KEYS: [&str; 7] = ["hyphenate", "minWord", "afterFirst", "befo
 
 fn hyphenation(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = HYPHENATION;
+    reject_unknown(p, &HYPHENATION_KEYS, C)?;
     if !HYPHENATION_KEYS.iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) {
         let para = first_para(s, p, C)?;
         let h = para.hyphenation.clamped();
@@ -180,8 +194,24 @@ fn range_mut<'a>(j: &'a mut Justification, prefix: &str) -> Option<&'a mut Spaci
     }
 }
 
+/// Every option key of `text.justification`.
+const JUSTIFICATION_KEYS: [&str; 11] = [
+    "wordSpacingMin",
+    "wordSpacingDesired",
+    "wordSpacingMax",
+    "letterSpacingMin",
+    "letterSpacingDesired",
+    "letterSpacingMax",
+    "glyphScalingMin",
+    "glyphScalingDesired",
+    "glyphScalingMax",
+    "autoLeading",
+    "singleWordJustification",
+];
+
 fn justification(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = JUSTIFICATION;
+    reject_unknown(p, &JUSTIFICATION_KEYS, C)?;
     // (prefix, [min, desired, max]) given.
     let mut given: Vec<(&str, [Option<f64>; 3])> = vec![];
     for (prefix, limits) in RANGES {
@@ -190,6 +220,12 @@ fn justification(s: &mut Session, p: &Value) -> Result<Value> {
             number(p, &format!("{prefix}Desired"), limits, C)?,
             number(p, &format!("{prefix}Max"), limits, C)?,
         ];
+        // Values given together contradict each other out of order.
+        let after = |a: Option<f64>, b: Option<f64>| matches!((a, b), (Some(a), Some(b)) if a > b);
+        let [min, desired, max] = v;
+        if after(min, desired) || after(desired, max) || after(min, max) {
+            return Err(bad(C, format!("`{prefix}Min`, `{prefix}Desired` and `{prefix}Max` must be in order (Minimum ≤ Desired ≤ Maximum)")));
+        }
         if v.iter().any(Option::is_some) {
             given.push((prefix, v));
         }
@@ -206,7 +242,8 @@ fn justification(s: &mut Session, p: &Value) -> Result<Value> {
         ),
     };
     if given.is_empty() && auto_leading.is_none() && single_word.is_none() {
-        let j = first_para(s, p, C)?.justification.clamped();
+        let para = first_para(s, p, C)?;
+        let j = para.justification.clamped();
         let mut o = Map::new();
         for (prefix, r) in [("wordSpacing", j.word_spacing), ("letterSpacing", j.letter_spacing), ("glyphScaling", j.glyph_scaling)] {
             o.insert(format!("{prefix}Min"), json!(r.min));
@@ -214,7 +251,9 @@ fn justification(s: &mut Session, p: &Value) -> Result<Value> {
             o.insert(format!("{prefix}Max"), json!(r.max));
         }
         o.insert("autoLeading".into(), json!(j.auto_leading));
-        let sw = SINGLE_WORD.iter().find(|(_, w)| *w == j.single_word).map_or("fullJustify", |(k, _)| k);
+        // A paragraph from before the option shows the choice it is set like.
+        let shown = j.single_word.effective(para.justify);
+        let sw = SINGLE_WORD.iter().find(|(_, w)| *w == shown).map_or("fullJustify", |(k, _)| k);
         o.insert("singleWordJustification".into(), json!(sw));
         return Ok(Value::Object(o));
     }

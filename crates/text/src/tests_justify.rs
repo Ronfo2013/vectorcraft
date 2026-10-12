@@ -243,18 +243,70 @@ fn auto_leading_sets_the_leading_of_auto_lines() {
     assert!((step(&fixed) - 14.0).abs() < 1e-6, "{}", step(&fixed));
 }
 
+fn origins(l: &TextLayout, line: usize) -> Vec<Point> {
+    l.glyphs.iter().filter(|g| g.line == line).map(|g| g.origin).collect()
+}
+
 #[test]
-fn default_options_leave_composition_unchanged() {
-    // The defaults are VectorCraft's composition before the dialogs: a paragraph with them set
-    // explicitly lays out identically.
-    let mut t = area(LONG, 12.0, Rect::new(0.0, 0.0, 180.0, 2000.0), Justify::JustifyLeft);
-    t.para.hyphenate = true;
-    let a = layout(db(), &t);
-    t.para.hyphenation = Hyphenation::default();
-    t.para.justification = Justification::default();
-    let b = layout(db(), &t);
-    assert_eq!(a.glyphs.len(), b.glyphs.len());
-    for (x, y) in a.glyphs.iter().zip(&b.glyphs) {
-        assert_eq!(x.origin, y.origin);
+fn old_files_keep_their_single_word_lines() {
+    // A paragraph saved before the options: no `hyphenation` or `justification` key.
+    let frame = Rect::new(0.0, 0.0, 160.0, 400.0);
+    for (key, justify) in [("JustifyLeft", Justify::JustifyLeft), ("JustifyCenter", Justify::JustifyCenter), ("JustifyRight", Justify::JustifyRight)]
+    {
+        let para: vectorcraft_doc::ParaStyle = serde_json::from_str(&format!(r#"{{"justify":"{key}"}}"#)).unwrap();
+        assert_eq!(para.justify, justify);
+        assert_eq!(para.justification.single_word, SingleWordJustify::Legacy);
+        let mut t = area("Typography arrangement", 20.0, frame, justify);
+        t.para = para;
+        let old = layout(db(), &t);
+        // Before the options, "Typography" alone on a justified line started at the left edge,
+        // unspread: exactly where a left-aligned paragraph sets it.
+        let left = layout(db(), &area("Typography arrangement", 20.0, frame, Justify::Left));
+        assert!(old.lines.len() >= 2);
+        assert_eq!(origins(&old, 0), origins(&left, 0), "{key}");
+        assert_eq!((old.lines[0].x0, old.lines[0].x1), (left.lines[0].x0, left.lines[0].x1), "{key}");
+        assert!(old.lines[0].x1 < 150.0, "{key}: not spread");
+        // New type spreads it (Full Justify).
+        t.para.justification.single_word = SingleWordJustify::FullJustify;
+        assert!((layout(db(), &t).lines[0].x1 - 160.0).abs() < 0.5, "{key}");
+    }
+    // Justify All Lines always spread a single word, and still does.
+    let para: vectorcraft_doc::ParaStyle = serde_json::from_str(r#"{"justify":"JustifyAll"}"#).unwrap();
+    let mut t = area("Typography", 20.0, frame, Justify::JustifyAll);
+    t.para = para;
+    let all = layout(db(), &t);
+    assert!(all.lines[0].x0.abs() < 1e-6 && (all.lines[0].x1 - 160.0).abs() < 0.5, "{:?}", all.lines[0]);
+}
+
+#[test]
+fn old_files_lay_out_as_with_the_default_options() {
+    // The defaults are VectorCraft's composition before the dialogs: a paragraph loaded without
+    // the options, one with them set explicitly, and one whose options are the defaults all lay
+    // out identically, and a justified line's word spaces share the slack exactly.
+    let frame = Rect::new(0.0, 0.0, 180.0, 2000.0);
+    for justify in ["JustifyLeft", "JustifyAll", "Left"] {
+        let para: vectorcraft_doc::ParaStyle = serde_json::from_str(&format!(r#"{{"justify":"{justify}","hyphenate":true}}"#)).unwrap();
+        assert_eq!(para.hyphenation, Hyphenation::default());
+        assert_eq!(para.justification, Justification::default());
+        let mut t = area(LONG, 12.0, frame, para.justify);
+        t.para = para;
+        let a = layout(db(), &t);
+        t.para.hyphenation = Hyphenation::default();
+        t.para.justification = Justification::default();
+        let b = layout(db(), &t);
+        assert_eq!(a.glyphs.len(), b.glyphs.len());
+        for (x, y) in a.glyphs.iter().zip(&b.glyphs) {
+            assert_eq!((x.origin, x.advance), (y.origin, y.advance));
+        }
+        if justify == "JustifyLeft" {
+            // Non-last lines with word spaces end exactly at the frame's edge.
+            let n = a.lines.len();
+            for li in a.lines.iter().take(n.saturating_sub(1)) {
+                if a.glyphs[li.glyph_start..li.glyph_end].iter().any(|g| g.len == 0) {
+                    continue;
+                }
+                assert!((li.x1 - frame.width()).abs() < 1e-6, "{li:?}");
+            }
+        }
     }
 }

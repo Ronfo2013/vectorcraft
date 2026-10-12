@@ -300,7 +300,10 @@ fn justification_options_through_the_command() {
         assert!(s.execute("text.justification", &p).is_err(), "{bad}");
     }
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(text(&s, id).para.justification, vectorcraft_doc::Justification::default());
+    assert_eq!(
+        text(&s, id).para.justification,
+        vectorcraft_doc::Justification { single_word: vectorcraft_doc::SingleWordJustify::FullJustify, ..Default::default() }
+    );
     // The options survive a save and reopen of the native format.
     s.execute("text.justification", &json!({"ids": [id], "wordSpacingDesired": 120})).unwrap();
     s.execute("text.hyphenation", &json!({"ids": [id], "afterFirst": 4})).unwrap();
@@ -309,4 +312,106 @@ fn justification_options_through_the_command() {
     let NodeKind::Text(t) = &back.node(NodeId(id)).unwrap().kind else { panic!("text") };
     assert_eq!(t.para.justification.word_spacing.desired, 120.0);
     assert_eq!(t.para.hyphenation.after_first, 4);
+    assert_eq!(t.para.justification.single_word, vectorcraft_doc::SingleWordJustify::FullJustify, "new type keeps Full Justify");
+}
+
+#[test]
+fn justification_rejects_contradictions_and_unknown_keys() {
+    let mut s = session();
+    let id = area(&mut s, "spacing in type");
+    let before = text(&s, id).para.clone();
+    for bad in [
+        json!({"wordSpacingMin": 120, "wordSpacingDesired": 100}),
+        json!({"wordSpacingDesired": 200, "wordSpacingMax": 150}),
+        json!({"letterSpacingMin": 10, "letterSpacingMax": 5}),
+        json!({"glyphScalingMin": 110, "glyphScalingDesired": 105, "glyphScalingMax": 120}),
+        json!({"wordSpacingDesire": 100}),
+        json!({"autoLeading": 150, "single": "alignLeft"}),
+    ] {
+        let mut p = bad.clone();
+        p["ids"] = json!([id]);
+        assert!(s.execute("text.justification", &p).is_err(), "{bad}");
+    }
+    for bad in [json!({"minWords": 5}), json!({"zone": 10, "hyphenateCaps": true})] {
+        let mut p = bad.clone();
+        p["ids"] = json!([id]);
+        assert!(s.execute("text.hyphenation", &p).is_err(), "{bad}");
+    }
+    // A query with a misspelt option is an error too, not a silent query.
+    assert!(s.execute("text.justification", &json!({"ids": [id], "autoleading": 150})).is_err());
+    assert_eq!(text(&s, id).para, before, "nothing changed");
+    // Values in order, and equal ones, are fine.
+    s.execute("text.justification", &json!({"ids": [id], "wordSpacingMin": 90, "wordSpacingDesired": 90, "wordSpacingMax": 300})).unwrap();
+    assert_eq!(text(&s, id).para.justification.word_spacing, vectorcraft_doc::SpacingRange::new(90.0, 90.0, 300.0));
+}
+
+#[test]
+fn old_paragraphs_show_how_their_single_words_are_set() {
+    let mut s = session();
+    let id = area(&mut s, "spacing in type");
+    // A paragraph from a file saved before the option.
+    s.edit("test", |d, _| {
+        if let Some(NodeKind::Text(t)) = d.node_mut(NodeId(id)).map(|n| &mut n.kind) {
+            t.para.justification = vectorcraft_doc::Justification::default();
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(text(&s, id).para.justification.single_word, vectorcraft_doc::SingleWordJustify::Legacy);
+    for (justify, shown) in [("justifyLeft", "alignLeft"), ("justifyCenter", "alignLeft"), ("justifyAll", "fullJustify")] {
+        s.execute("text.setStyle", &json!({"id": id, "justify": justify})).unwrap();
+        let q = s.execute("text.justification", &json!({"ids": [id]})).unwrap();
+        assert_eq!(q["singleWordJustification"], json!(shown), "{justify}");
+    }
+    // Other options leave it as it was.
+    s.execute("text.justification", &json!({"ids": [id], "autoLeading": 130})).unwrap();
+    assert_eq!(text(&s, id).para.justification.single_word, vectorcraft_doc::SingleWordJustify::Legacy);
+    assert!(s.execute("text.justification", &json!({"ids": [id], "singleWordJustification": "legacy"})).is_err(), "not a choice");
+}
+
+#[test]
+fn paragraph_options_on_several_objects_undo_in_one_step() {
+    let mut s = session();
+    let a = area(&mut s, "first frame");
+    let b = s.execute("text.create", &json!({"x": 400, "y": 10, "text": "second frame", "area": {"width": 200, "height": 200}})).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let (pa, pb) = (text(&s, a).para.clone(), text(&s, b).para.clone());
+    let r = s
+        .execute(
+            "text.justification",
+            &json!({"ids": [a, b], "wordSpacingDesired": 120, "autoLeading": 150, "singleWordJustification": "alignRight"}),
+        )
+        .unwrap();
+    assert_eq!(r["ids"], json!([a, b]));
+    for id in [a, b] {
+        let j = text(&s, id).para.justification;
+        assert_eq!((j.word_spacing.desired, j.auto_leading, j.single_word), (120.0, 150.0, vectorcraft_doc::SingleWordJustify::AlignRight));
+    }
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!((text(&s, a).para, text(&s, b).para), (pa.clone(), pb.clone()), "one undo step restores both");
+    s.execute("text.hyphenation", &json!({"ids": [a, b], "minWord": 8, "hyphenLimit": 2, "hyphenate": true})).unwrap();
+    for id in [a, b] {
+        let p = text(&s, id).para;
+        assert!(p.hyphenate && p.hyphenation.min_word == 8 && p.hyphenation.hyphen_limit == 2);
+    }
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!((text(&s, a).para, text(&s, b).para), (pa, pb), "one undo step restores both");
+}
+
+#[test]
+fn leading_nudge_starts_from_the_paragraphs_auto_leading() {
+    let mut s = session();
+    let id = s.execute("text.create", &json!({"x": 10, "y": 10, "text": "one two\nthree four", "size": 10})).unwrap()["id"].as_u64().unwrap();
+    s.execute("text.justification", &json!({"ids": [id], "autoLeading": 200})).unwrap();
+    let inc = s.prefs.type_size_increment;
+    // Alt+↑/↓ on the whole object: Auto leading is 20 pt (200 % of 10 pt), and the nudge goes on
+    // from there.
+    s.execute("type.step", &json!({"attribute": "leading", "id": id})).unwrap();
+    let t = text(&s, id);
+    assert!(t.runs.iter().all(|r| r.style.leading.is_some_and(|l| (l - (20.0 + inc)).abs() < 1e-9)), "{:?}", t.runs);
+    // At the default 120 % it starts from 12 pt, as before.
+    let id = s.execute("text.create", &json!({"x": 10, "y": 200, "text": "plain", "size": 10})).unwrap()["id"].as_u64().unwrap();
+    s.execute("type.step", &json!({"attribute": "leading", "id": id})).unwrap();
+    assert!(text(&s, id).runs.iter().all(|r| r.style.leading.is_some_and(|l| (l - (12.0 + inc)).abs() < 1e-9)));
 }

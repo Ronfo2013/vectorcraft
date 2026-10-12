@@ -142,7 +142,8 @@ pub(crate) fn compose(
         w[i + 1] = w[i] + gl.adv;
         sp[i + 1] = sp[i] + if space { gl.adv } else { 0.0 };
         lu[i + 1] = lu[i] + if space { 0.0 } else { units.get(i).copied().filter(|u| u.is_finite()).unwrap_or(0.0) };
-        cw[i + 1] = cw[i] + if space { 0.0 } else { gl.adv };
+        // The characters Glyph Scaling acts on, as the line's own fill counts them.
+        cw[i + 1] = cw[i] + if crate::justify::is_char(gl) { gl.adv } else { 0.0 };
     }
     if !w[n].is_finite() || !lu[n].is_finite() {
         return None;

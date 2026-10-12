@@ -138,11 +138,13 @@ pub(crate) fn fill(extra: f64, s: &LineStuff, glue: &Glue, spread: bool) -> Fill
         t
     };
     let mut r = extra;
-    let mut word = take(&mut r, s.space_width * if grow { glue.word_stretch } else { glue.word_shrink });
+    let _word_room = take(&mut r, s.space_width * if grow { glue.word_stretch } else { glue.word_shrink });
     let letters = take(&mut r, s.units * if grow { glue.letter_stretch } else { glue.letter_shrink });
     let glyphs = take(&mut r, s.chars * if grow { glue.glyph_stretch } else { glue.glyph_shrink });
     if s.spaces > 0 {
-        word += r;
+        // Everything the letters and glyphs don't take (computed from `extra`, not summed back,
+        // so a line with no letter or glyph room spreads exactly as before the options).
+        let word = extra - letters - glyphs;
         // Never below zero.
         f.per_space = (word / s.spaces as f64).max(-s.min_space);
     } else if grow && spread && s.gaps > 0 {
@@ -157,14 +159,27 @@ pub(crate) fn fill(extra: f64, s: &LineStuff, glue: &Glue, spread: bool) -> Fill
     f
 }
 
-/// How a justified line with no word space is set: spread across the line, or aligned (0 left,
-/// 1 centre, 2 right).
-pub(crate) fn single_word(j: &Justification) -> Option<u8> {
+/// How a justified line with no word space is set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SingleWord {
+    /// Spread across the line.
+    Spread,
+    /// Justified from the left edge without spreading (files from before the option, outside
+    /// Justify All Lines).
+    Unspread,
+    /// Aligned instead: 0 left, 1 centre, 2 right.
+    Align(u8),
+}
+
+/// How a justified line with no word space is set in a paragraph that `justify_all`s.
+pub(crate) fn single_word(j: &Justification, justify_all: bool) -> SingleWord {
     match j.single_word {
-        SingleWordJustify::FullJustify => None,
-        SingleWordJustify::AlignLeft => Some(0),
-        SingleWordJustify::AlignCenter => Some(1),
-        SingleWordJustify::AlignRight => Some(2),
+        SingleWordJustify::Legacy if justify_all => SingleWord::Spread,
+        SingleWordJustify::Legacy => SingleWord::Unspread,
+        SingleWordJustify::FullJustify => SingleWord::Spread,
+        SingleWordJustify::AlignLeft => SingleWord::Align(0),
+        SingleWordJustify::AlignCenter => SingleWord::Align(1),
+        SingleWordJustify::AlignRight => SingleWord::Align(2),
     }
 }
 

@@ -135,6 +135,135 @@ proptest! {
     }
 }
 
+/// A number from anywhere: NaN, the infinities, the extremes, and values in and out of the
+/// Hyphenation and Justification fields' ranges.
+fn wild_f64() -> impl Strategy<Value = f64> {
+    prop_oneof![Just(f64::NAN), Just(f64::INFINITY), Just(f64::NEG_INFINITY), Just(1e308), Just(-1e308), Just(0.0), -2000.0..2000.0f64, 0.0..300.0f64,]
+}
+
+fn arb_range() -> impl Strategy<Value = vectorcraft_doc::SpacingRange> {
+    (wild_f64(), wild_f64(), wild_f64()).prop_map(|(a, b, c)| vectorcraft_doc::SpacingRange::new(a, b, c))
+}
+
+fn arb_paragraph_options() -> impl Strategy<Value = (vectorcraft_doc::Hyphenation, vectorcraft_doc::Justification)> {
+    use vectorcraft_doc::{Hyphenation, Justification, SingleWordJustify};
+    let count = prop_oneof![Just(0u32), Just(u32::MAX), 0u32..40];
+    let hyphenation = (count.clone(), count.clone(), count.clone(), count, wild_f64(), any::<bool>()).prop_map(
+        |(min_word, after_first, before_last, hyphen_limit, zone, capitalized)| Hyphenation {
+            min_word,
+            after_first,
+            before_last,
+            hyphen_limit,
+            zone,
+            capitalized,
+        },
+    );
+    let single = prop_oneof![
+        Just(SingleWordJustify::Legacy),
+        Just(SingleWordJustify::FullJustify),
+        Just(SingleWordJustify::AlignLeft),
+        Just(SingleWordJustify::AlignCenter),
+        Just(SingleWordJustify::AlignRight),
+    ];
+    let justification = (arb_range(), arb_range(), arb_range(), wild_f64(), single).prop_map(
+        |(word_spacing, letter_spacing, glyph_scaling, auto_leading, single_word)| Justification {
+            word_spacing,
+            letter_spacing,
+            glyph_scaling,
+            auto_leading,
+            single_word,
+        },
+    );
+    (hyphenation, justification)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, failure_persistence: None, ..ProptestConfig::default() })]
+
+    /// Paragraph Hyphenation and Justification options, however wild in memory, survive save →
+    /// load inside their fields' ranges (what the layout reads), and the text lays out finite.
+    #[test]
+    fn paragraph_options_roundtrip_clamped_and_lay_out_finite(
+        (h, j) in arb_paragraph_options(),
+        justify in prop_oneof![Just(vectorcraft_doc::Justify::JustifyLeft), Just(vectorcraft_doc::Justify::JustifyAll), Just(vectorcraft_doc::Justify::Left)],
+        hyphenate in any::<bool>(),
+    ) {
+        use vectorcraft_doc::{TextKind, TextObject};
+        let mut t = TextObject::point(vectorcraft_geom::Point::ZERO, "Extraordinarily comprehensive typography notwithstanding. Words\nTypography", vectorcraft_doc::CharStyle::default());
+        t.kind = TextKind::Area { frame: vectorcraft_geom::shapes::rectangle(vectorcraft_geom::Rect::new(0.0, 0.0, 90.0, 400.0)) };
+        t.xf = Affine::IDENTITY;
+        t.para.justify = justify;
+        t.para.hyphenate = hyphenate;
+        t.para.hyphenation = h.clone();
+        t.para.justification = j.clone();
+        let mut d = Document::new(200.0, 500.0);
+        let layer = d.add_layer(None);
+        let id = d.alloc_id();
+        d.insert(Some(layer), 0, Node::new(id, NodeKind::Text(Box::new(t)))).unwrap();
+        for pretty in [false, true] {
+            let back = load(&save(&d, pretty)).unwrap();
+            check_document(&back).map_err(TestCaseError::fail)?;
+            let Some(NodeKind::Text(t)) = back.node(id).map(|n| &n.kind) else { return Err(TestCaseError::fail("text lost")) };
+            prop_assert_eq!(&t.para.hyphenation, &h.clamped());
+            let jc = j.clamped();
+            prop_assert_eq!(&t.para.justification, &jc);
+            for r in [jc.word_spacing, jc.letter_spacing, jc.glyph_scaling] {
+                prop_assert!(r.min.is_finite() && r.min <= r.desired && r.desired <= r.max, "{:?}", r);
+            }
+            let l = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
+            prop_assert!(l.glyphs.iter().all(|g| g.origin.x.is_finite() && g.origin.y.is_finite() && g.advance.is_finite()));
+            prop_assert!(l.lines.iter().all(|li| li.x0.is_finite() && li.x1.is_finite() && li.baseline.is_finite()));
+        }
+        // Laid out straight from memory, unclamped, too.
+        let Some(NodeKind::Text(t)) = d.node(id).map(|n| &n.kind) else { return Err(TestCaseError::fail("text")) };
+        let l = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
+        prop_assert!(l.glyphs.iter().all(|g| g.origin.x.is_finite() && g.origin.y.is_finite() && g.advance.is_finite()));
+    }
+}
+
+#[test]
+fn partial_paragraph_options_load() {
+    // A spacing range with a value missing or null, and junk-free but out-of-range values, load
+    // with the defaults in their place, clamped.
+    let para = json!({
+        "justify": "JustifyLeft",
+        "hyphenation": {"minWord": 0, "zone": null},
+        "justification": {"wordSpacing": {"desired": 120}, "letterSpacing": {"min": null, "max": 900}, "autoLeading": null}
+    });
+    let mut d = Document::new(10.0, 10.0);
+    let layer = d.add_layer(None);
+    let id = d.alloc_id();
+    d.insert(
+        Some(layer),
+        0,
+        Node::new(id, NodeKind::Text(Box::new(vectorcraft_doc::TextObject::point(vectorcraft_geom::Point::ZERO, "x", Default::default())))),
+    )
+    .unwrap();
+    let mut v: Value = serde_json::from_slice(&save(&d, false)).unwrap();
+    // Swap the saved paragraph for the partial one wherever a text object's `para` is.
+    fn swap(v: &mut Value, para: &Value) -> bool {
+        match v {
+            Value::Object(o) if o.contains_key("runs") && o.contains_key("para") => {
+                o.insert("para".into(), para.clone());
+                true
+            }
+            Value::Object(o) => o.values_mut().any(|c| swap(c, para)),
+            Value::Array(a) => a.iter_mut().any(|c| swap(c, para)),
+            _ => false,
+        }
+    }
+    assert!(swap(&mut v, &para), "a text object in the saved file");
+    let back = load(&serde_json::to_vec(&v).unwrap()).unwrap();
+    let Some(NodeKind::Text(t)) = back.node(id).map(|n| &n.kind) else { panic!("text") };
+    let j = &t.para.justification;
+    assert_eq!(j.word_spacing, vectorcraft_doc::SpacingRange::new(80.0, 120.0, 150.0));
+    assert_eq!(j.letter_spacing, vectorcraft_doc::SpacingRange::new(0.0, 0.0, 500.0));
+    assert_eq!(j.auto_leading, 120.0);
+    assert_eq!(j.single_word, vectorcraft_doc::SingleWordJustify::Legacy, "a file without the option keeps the old setting");
+    assert_eq!(t.para.hyphenation.min_word, 1);
+    assert_eq!(t.para.hyphenation.zone, 0.0);
+}
+
 #[test]
 fn rich_document_roundtrips() {
     let d = rich_doc();

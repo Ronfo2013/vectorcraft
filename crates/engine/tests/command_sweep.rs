@@ -432,6 +432,78 @@ fn area_options_fit_junk() {
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
 }
 
+/// Paragraph panel menu › Hyphenation… and Justification… with junk values, on selected area type
+/// (the fixtures have none): never a panic, every junk value refused or clamped, the document stays
+/// sound and its layout finite.
+#[test]
+fn paragraph_options_junk() {
+    let mut cases: Vec<(&str, Value)> = vec![];
+    let junk =
+        [json!(1e308), json!(-1e308), json!(-1), json!(u64::MAX), json!("x"), json!("100"), json!([1]), json!({"a": 1}), json!(1.5), json!(true)];
+    for key in ["minWord", "afterFirst", "beforeLast", "hyphenLimit", "zone", "hyphenate", "capitalized"] {
+        for v in &junk {
+            cases.push(("text.hyphenation", json!({ key: v })));
+        }
+    }
+    for key in [
+        "wordSpacingMin",
+        "wordSpacingDesired",
+        "wordSpacingMax",
+        "letterSpacingMin",
+        "letterSpacingDesired",
+        "letterSpacingMax",
+        "glyphScalingMin",
+        "glyphScalingDesired",
+        "glyphScalingMax",
+        "autoLeading",
+        "singleWordJustification",
+    ] {
+        for v in &junk {
+            cases.push(("text.justification", json!({ key: v })));
+        }
+    }
+    cases.extend([
+        ("text.hyphenation", json!({"minWord": 1, "afterFirst": 1, "beforeLast": 1, "hyphenate": true, "start": u64::MAX, "end": -1})),
+        ("text.hyphenation", json!({"zone": 1296, "hyphenLimit": 25, "ids": [u64::MAX, "x"]})),
+        ("text.hyphenation", json!({"bogus": 1})),
+        ("text.justification", json!({"wordSpacingMin": 0, "wordSpacingDesired": 0, "wordSpacingMax": 0, "glyphScalingDesired": 50})),
+        ("text.justification", json!({"letterSpacingMin": -100, "letterSpacingMax": 500, "autoLeading": 0, "start": 1.5, "end": "x"})),
+        ("text.justification", json!({"wordSpacingMin": 1000, "wordSpacingMax": 0})),
+        ("text.justification", json!({"singleWordJustification": "legacy"})),
+        ("text.justification", json!({"glyphScalingMin": 200, "glyphScalingDesired": 200, "glyphScalingMax": 200, "autoLeading": 500})),
+    ]);
+    let story = "Extraordinarily comprehensive typographical considerations. Words that overflow a small frame. ".repeat(10);
+    let mut failures = vec![];
+    for (size, (w, h)) in [(12.0, (120.0, 400.0)), (0.1, (1.0, 1.0)), (1296.0, (100_000.0, 1.0))] {
+        let mut s = Fixture::Multi.session();
+        let made = s.execute("text.create", &json!({"x": 10, "y": 10, "size": size, "text": story, "area": {"width": w, "height": h}}));
+        let Ok(made) = made else { continue };
+        let id = made["id"].as_u64().unwrap_or(0);
+        let _ = s.execute("text.setStyle", &json!({"id": id, "justify": "justifyLeft"}));
+        for (cmd, p) in &cases {
+            match catch_quiet(|| s.execute(cmd, p)) {
+                Err(m) => failures.push(format!("PANIC {cmd} {p} [{size} pt]: {m}")),
+                Ok(_) => {
+                    let Ok(st) = s.doc() else { continue };
+                    if let Some(vectorcraft_doc::NodeKind::Text(t)) = st.doc.node(vectorcraft_doc::NodeId(id)).map(|n| &n.kind) {
+                        let l = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
+                        if !l.glyphs.iter().all(|g| g.origin.x.is_finite() && g.origin.y.is_finite() && g.advance.is_finite()) {
+                            failures.push(format!("{cmd} {p} [{size} pt]: non-finite layout"));
+                        }
+                    }
+                    if let Err(e) = check_session(&s) {
+                        failures.push(format!("{cmd} {p} [{size} pt]: {e}"));
+                    }
+                }
+            }
+        }
+        // Junk was refused or clamped: the options read back finite.
+        let q = s.execute("text.justification", &json!({"ids": [id]})).unwrap();
+        assert!(q.as_object().unwrap().values().all(|v| v.as_f64().is_none_or(f64::is_finite)), "{q}");
+    }
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+}
+
 /// A live polygon's Polygon Properties with junk values (the fixtures have no polygon), drawn
 /// plain, scaled unevenly and flattened to nothing: never a panic, and the document stays sound.
 #[test]

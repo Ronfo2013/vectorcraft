@@ -1528,7 +1528,8 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
         // Justification: the Desired spacing on every line, and the limits of justified lines
         // (horizontal type; vertical type keeps the defaults).
         let defaults = Justification::default();
-        let justification = if cx.vertical { &defaults } else { &para.justification };
+        let clamped = para.justification.clamped();
+        let justification = if cx.vertical { &defaults } else { &clamped };
         let units = justify::letter_units(&sg, justification);
         if justify::changes_spacing(justification) {
             justify::apply_desired(&mut sg, justification, &units);
@@ -1665,13 +1666,15 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             };
             let cjk_gaps = (i..body).filter(|&j| cjk_gap(j)).count();
             // Single Word Justification: a justified line with no word space may be aligned
-            // instead of spread.
-            if justify
-                && spaces == 0
-                && cjk_gaps == 0
-                && let Some(a) = justify::single_word(justification)
-            {
-                (justify, align) = (false, a);
+            // instead of spread (or, in a file from before the option, spread only in Justify All
+            // Lines).
+            let mut spread = true;
+            if justify && spaces == 0 && cjk_gaps == 0 {
+                match justify::single_word(justification, para.justify == Justify::JustifyAll) {
+                    justify::SingleWord::Spread => {}
+                    justify::SingleWord::Unspread => spread = false,
+                    justify::SingleWord::Align(a) => (justify, align) = (false, a),
+                }
             }
             if justify && (width - w).abs() > EPS {
                 if cjk_gaps > 0 && width > w {
@@ -1690,7 +1693,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                         chars: line.iter().filter(|g| justify::is_char(g)).map(|g| g.adv).sum(),
                         gaps: sg.get(i + 1..body).map_or(0, |s| s.iter().filter(|g| !g.continues_tcy()).count()),
                     };
-                    let f = justify::fill(width - w, &stuff, &glue, true);
+                    let f = justify::fill(width - w, &stuff, &glue, spread);
                     (per_space, per_gap, per_unit, glyph_scale) = (f.per_space, f.per_gap, f.per_unit, f.glyph_scale);
                 }
             }
