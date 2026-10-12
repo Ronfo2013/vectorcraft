@@ -1,6 +1,6 @@
 # Roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G11 and M9: the Transform effect's missing options and invisible checkboxes, #885; M4 and Current focus 2: a real Illustrator 30.8 `.ai` opens from its editing data, gradient meshes next; G9 `.ai` layer structure audited and property-tested, per-page PDF layers merged, unreadable private data named, #951/#868; G11 and Current focus: #937's reproduced case fixed (art past 4096 segments), #893 fixed; M7: accurate character controls after object/group scaling, #1034) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G11 and M9: the Transform effect's missing options and invisible checkboxes, #885; G11: bezier drag previews no longer stall, #834; SVG keeps the document's units, #864; M4 and Current focus 2: a real Illustrator 30.8 `.ai` opens from its editing data, gradient meshes next; G9 `.ai` layer structure audited and property-tested, per-page PDF layers merged, unreadable private data named, #951/#868; G11 and Current focus: #937's reproduced case fixed (art past 4096 segments), #893 fixed; M7: accurate character controls after object/group scaling, #1034) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Forward-looking plan. Where VectorCraft stands is in [`ROADMAP.md`](../ROADMAP.md) and
 [target-app-parity.md](target-app-parity.md); the ranked work list is [gaps.md](gaps.md). Hours are Opus 5.5
@@ -30,7 +30,7 @@ Checked 2026-10-10 from the code, tests and open issues; no workflow fails, so V
    Selection, smart guides and snapping first. 60–90 h, parallel by tool.
 2. **`.ai` files from real users** (G9): layer structure (#951, #868: both files opened as their PDF part; the open notes now name why, the editing-data reader's nesting is property-tested, and PDF layers repeated per page merge), guides when a file falls back to its PDF part (#779); a user's Illustrator 30.8 file opens from its editing data since unknown operators stopped aborting the reader, its gradient meshes left out with a loss note — reading meshes is next. Needs the users' files. 10–20 h.
 3. **Launch and stability** (G10): the Windows and Linux start-up reports. 20–35 h.
-4. **Core-tool bugs** (G11): Shape Builder regions (#937, the reproduced case fixed), Asset Export borders (#983); the Transform effect dialog (#885) is done. 8–15 h.
+4. **Core-tool bugs** (G11): Shape Builder regions (#937, the reproduced case fixed), Asset Export borders (#983); SVG units (#864) and the stalling bezier drag preview (#834) fixed; the Transform effect dialog (#885) is done. 8–15 h.
 5. **Raster effects** (G2) continue alongside: Artistic, Sketch, then the Effect Gallery. 24–40 h.
 
 ## Next
@@ -80,6 +80,8 @@ After placed documents (File › Place of a `.vectorcraft` file, linked), M4.14�
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | G11 and M9: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options and its dialog's checkboxes (#885); G11 hours unchanged |
+| 2026-10-11 | minor | #834 (bezier drag preview stalled after the pointer re-entered the window) fixed; G11 keeps #937 and its 8–15 h |
+| 2026-10-11 | minor | #864 (SVG files lost the document's units) fixed; G11 keeps #937 and its 8–15 h |
 | 2026-10-11 | minor | M4 and Current focus 2: a real Illustrator 30.8 `.ai` opens from its editing data (unknown operators skipped, meshes left out with a loss note, every artboard compared); next: gradient meshes |
 | 2026-10-11 | minor | M4 and Current focus 2: G9 audit of the `.ai` layer structure (#951, #868, #779, #758); hours unchanged, the users' files still needed |
 | 2026-10-11 | minor | #937's reproduced case fixed (Shape Builder lines cut art past 4096 segments); G11 keeps 8–15 h until confirmed on the reporter's file |

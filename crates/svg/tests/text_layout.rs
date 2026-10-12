@@ -147,7 +147,8 @@ fn justified_lines_place_each_word() {
 fn viewer_outlines(svg: &str) -> Vec<BezPath> {
     let mut db = usvg::fontdb::Database::new();
     db.load_font_data(std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/fonts/SourceSans3-Regular.ttf")).unwrap());
-    let opt = usvg::Options { fontdb: Arc::new(db), ..Default::default() };
+    // At 72 dpi: our root is sized in points (#864), and a point is a pixel here.
+    let opt = usvg::Options { fontdb: Arc::new(db), dpi: 72.0, ..Default::default() };
     let tree = usvg::Tree::from_str(svg, &opt).unwrap();
     fn walk(g: &usvg::Group, out: &mut Vec<BezPath>) {
         for n in g.children() {
