@@ -20,16 +20,16 @@ fn edge_point(p: (f64, f64), prev: (f64, f64), next: (f64, f64)) -> String {
     format!("%_[{} {} {} {} {} {} 1] /S X#\n", p.0, p.1, prev.0, prev.1, next.0, next.1)
 }
 
-/// A square patch from (`x`, `y`) of `size`, straight edges (handles a third of the way), its
-/// corners `colors` (RGB components) from the bottom left anticlockwise as the format lists
-/// them: corner 0, corner 1 (up), corner 2, corner 3; `before`: entries listed before corner 0
-/// (the last edge's points); `between`: entries between corner 1 and corner 2.
-fn square_patch(col: u32, row: u32, x: f64, y: f64, size: f64, colors: [&str; 4], before: &str, between: &str) -> String {
+/// The square patch `(col, row)` of the grid, from (`x`, `y`) with sides of `size`, straight
+/// edges (handles a third of the way), no edge points, its corners `colors` (components) in the
+/// order the format lists them: corner 0 at the bottom left, then clockwise (y up): corner 1 at
+/// the top left, corner 2 at the top right, corner 3 at the bottom right.
+fn square_patch((col, row): (u32, u32), x: f64, y: f64, size: f64, colors: [&str; 4]) -> String {
     let s = size;
     let t = s / 3.0;
     let (c0, c1, c2, c3) = ((x, y), (x, y + s), (x + s, y + s), (x + s, y));
     format!(
-        "%_[{col} {row}] /P X#\n%_[0] /R X#\n{before}{}{}{between}{}{}%_/E X#\n",
+        "%_[{col} {row}] /P X#\n%_[0] /R X#\n{}{}{}{}%_/E X#\n",
         corner(colors[0], c0, (x, y + t), (x + t, y)),
         corner(colors[1], c1, (x + t, y + s), (x, y + s - t)),
         corner(colors[2], c2, (x + s, y + s - t), (x + s - t, y + s)),
@@ -70,7 +70,7 @@ fn a_two_by_two_mesh_is_four_coons_patches() {
     let colors = ["1 0 0", "0 1 0", "0 0 1", "1 1 0"];
     let patches: String = [(0, 0, 10.0, 10.0), (1, 0, 40.0, 10.0), (0, 1, 10.0, 40.0), (1, 1, 40.0, 40.0)]
         .iter()
-        .map(|&(c, r, x, y)| square_patch(c, r, x, y, 30.0, colors, "", ""))
+        .map(|&(c, r, x, y)| square_patch((c, r), x, y, 30.0, colors))
         .collect();
     let data = layer(&mesh_object((2, 2), "DeviceRGB", &patches));
     let s = read_ok(&data);
@@ -153,7 +153,7 @@ fn edge_points_split_a_patch_into_a_grid() {
 /// mesh with no patch at all is an unread object; another kind of object stays unread.
 #[test]
 fn patches_it_cant_read_are_counted_as_left_out() {
-    let good = square_patch(0, 0, 10.0, 10.0, 30.0, ["1 0 0"; 4], "", "");
+    let good = square_patch((0, 0), 10.0, 10.0, 30.0, ["1 0 0"; 4]);
     let three = "%_[1 0] /P X#\n%_[0] /R X#\n%_[1 0 0 1 50 10 50 20 1 60 10 1] /N X#\n%_[1 0 0 1 50 40 60 40 1 50 30 1] /N X#\n%_[1 0 0 1 80 40 80 30 1 70 40 1] /N X#\n%_/E X#\n";
     let odd = "%_[2 0] /P X#\n%_[0] /R X#\n%_[1 2 3] /N X#\n%_/E X#\n";
     let s = read_ok(&layer(&mesh_object((3, 1), "DeviceRGB", &format!("{good}{three}{odd}"))));
