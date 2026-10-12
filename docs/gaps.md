@@ -133,8 +133,11 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
   line onto a raised first mark), a vertical glyph narrower than an em. Now the line takes the font's kerning or
   none, whichever the file followed, and tracking that puts every glyph where the file drew it (one value for an
   evenly spaced line, else each character its own, word spacing on the spaces); text rise stays in the line as
-  baseline shift; a vertical glyph is centred on its column by its own advance (ISO 32000-1 §9.7.4.3); justified
-  text boxes (word spacing on each wrapped line) come back as justified area type. Fixtures written from the
+  baseline shift (a glyph a little off the baseline further than a space away, as the next cell of a table's row,
+  stays an object of its own; type on a path is never shifted off its curve); a vertical glyph's column centre
+  comes from the font's own position vectors (`/W2`, else half its `/W` or `/DW` width, ISO 32000-1 §9.7.4.3);
+  justified text boxes (word spacing on each wrapped line) come back as justified area type, and text boxes word
+  spaced alike on every line, or spaced a hair unevenly, as area type too. Fixtures written from the
   specification cover Td, TD, Tm, T*, TL, ', ", Ts, Tz, Tc, Tw, TJ, the CTM (scaled, flipped, anisotropic), the
   crop box and page rotation, Type 0 (Identity-H and -V) and Type 3 fonts, point and area type
   (`tests_text_placement`); a font that is neither embedded nor installed still draws in a stand-in.

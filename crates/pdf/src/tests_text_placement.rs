@@ -85,6 +85,17 @@ fn cid_font(desc: usize) -> String {
     )
 }
 
+/// [`cid_font`] with vertical metrics (/W2: each glyph's position vector half its width across,
+/// 880 up) and no /W (every width the default, an em).
+fn cid_font_w2(desc: usize) -> String {
+    let face = sans();
+    let w2: Vec<String> = cid_chars().map(|c| format!("{} [-1000 {} 880]", face.glyph_for(c), width(c) / 2.0)).collect();
+    format!(
+        "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /SourceSans3-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {desc} 0 R /CIDToGIDMap /Identity /DW 1000 /DW2 [880 -1000] /W2 [{}] >>",
+        w2.join(" ")
+    )
+}
+
 /// A Type 3 font (object `first`, its glyph procedures the two after it) whose glyph space is
 /// 1/`upm` of text space (FontMatrix [1/upm 0 0 1/upm 0 0]): `a` is half an em wide and draws a box
 /// 0.4 em wide, `b` an em wide with a box of 0.9 em; both boxes are 0.7 em tall on the baseline.
@@ -105,38 +116,46 @@ fn type3(first: usize, upm: f64) -> Vec<String> {
 /// - `/F1`: Source Sans 3, embedded, a simple TrueType font;
 /// - `/F4`: Source Sans 3 as a Type 0 font, Identity-H (two-byte glyph ids, see [`gids`]);
 /// - `/F5`: the same, Identity-V (vertical writing);
+/// - `/F6`: the same with vertical metrics (/W2) and no widths (/W), Identity-V;
 /// - `/T3`, `/T30`: Type 3 fonts of 1000 and of 100 units an em;
 /// - `/HV`: Helvetica, not embedded.
 fn page(content: &str, entries: &str) -> Vec<u8> {
+    sized_page(300.0, 200.0, content, entries)
+}
+
+/// [`page`], `w` × `h` pt.
+fn sized_page(w: f64, h: f64, content: &str, entries: &str) -> Vec<u8> {
     let n = first_extra(1);
-    let type0 = |enc: &str| {
+    let type0 = |enc: &str, cid: usize| {
         format!(
-            "<< /Type /Font /Subtype /Type0 /BaseFont /SourceSans3-Regular /Encoding /{enc} /DescendantFonts [{} 0 R] /ToUnicode {} 0 R >>",
-            n + 3,
+            "<< /Type /Font /Subtype /Type0 /BaseFont /SourceSans3-Regular /Encoding /{enc} /DescendantFonts [{cid} 0 R] /ToUnicode {} 0 R >>",
             n + 4
         )
     };
     let mut objs = vec![
-        font_file(),         // n
-        descriptor(n),       // n + 1
-        simple(n + 1),       // n + 2: F1
-        cid_font(n + 1),     // n + 3
-        to_unicode(),        // n + 4
-        type0("Identity-H"), // n + 5: F4
-        type0("Identity-V"), // n + 6: F5
+        font_file(),                // n
+        descriptor(n),              // n + 1
+        simple(n + 1),              // n + 2: F1
+        cid_font(n + 1),            // n + 3
+        to_unicode(),               // n + 4
+        type0("Identity-H", n + 3), // n + 5: F4
+        type0("Identity-V", n + 3), // n + 6: F5
+        cid_font_w2(n + 1),         // n + 7
+        type0("Identity-V", n + 7), // n + 8: F6
     ];
     let t3 = n + objs.len();
     objs.extend(type3(t3, 1000.0));
     objs.extend(type3(t3 + 3, 100.0));
     let refs: Vec<&str> = objs.iter().map(String::as_str).collect();
     let resources = format!(
-        "/Font << /F1 {} 0 R /F4 {} 0 R /F5 {} 0 R /T3 {t3} 0 R /T30 {} 0 R /HV << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> >>",
+        "/Font << /F1 {} 0 R /F4 {} 0 R /F5 {} 0 R /F6 {} 0 R /T3 {t3} 0 R /T30 {} 0 R /HV << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> >>",
         n + 2,
         n + 5,
         n + 6,
+        n + 8,
         t3 + 3
     );
-    pdf_with(&[PdfPage { resources, entries: entries.into(), ..PdfPage::new(300.0, 200.0, content) }], &refs, None)
+    pdf_with(&[PdfPage { resources, entries: entries.into(), ..PdfPage::new(w, h, content) }], &refs, None)
 }
 
 fn open_as(bytes: &[u8], text_as: TextAs) -> Document {
@@ -393,4 +412,177 @@ fn type_in_a_stand_in_font_still_starts_where_the_file_starts_it() {
     assert_eq!(t[0].plain_text(), "Raised word line");
     let origin = t[0].xf * Point::ZERO;
     assert!((origin.x - 20.0).abs() < 1e-6 && (origin.y - 145.0).abs() < 1e-6, "{origin:?}");
+}
+
+/// Type on a gentle arc: each glyph turned a little from the one before, the first few within a
+/// hair of the first's direction. They sit on the curve; none is shifted off it as well (which
+/// moved them off the curve by the shift twice over).
+#[test]
+fn type_on_a_gentle_arc_sits_on_its_curve_unshifted() {
+    let text = "Gentle arc of type here";
+    let (size, r) = (12.0, 450.0);
+    let (cx, cy) = (150.0, -300.0);
+    let mut phi = 100f64.to_radians();
+    let mut content = format!("BT /F1 {size} Tf ");
+    for c in text.chars() {
+        let a = phi - std::f64::consts::FRAC_PI_2;
+        let (x, y) = (cx + r * phi.cos(), cy + r * phi.sin());
+        let esc = if c == ' ' { " ".to_string() } else { c.to_string() };
+        content += &format!("{:.6} {:.6} {:.6} {:.6} {x:.4} {y:.4} Tm ({esc}) Tj ", a.cos(), a.sin(), -a.sin(), a.cos());
+        phi -= width(c) * size / 1000.0 / r;
+    }
+    content += "ET";
+    let t = texts(&open_as(&page(&content, ""), TextAs::Text));
+    assert_eq!(t.len(), 1, "{:?}", t.iter().map(TextObject::plain_text).collect::<Vec<_>>());
+    assert_eq!(t[0].plain_text(), text);
+    assert!(matches!(t[0].kind, TextKind::OnPath { .. }), "type on a path");
+    assert!(t[0].runs.iter().all(|r| r.style.baseline_shift == 0.0), "{:?}", t[0].runs);
+    let d = displacement(&page(&content, ""));
+    assert!(d < 0.05, "glyphs {d:.3} pt off the curve");
+}
+
+/// A line with as many raised characters as level ones keeps the baseline of its first glyph:
+/// "m²" sits on the m's baseline, the 2 shifted up.
+#[test]
+fn a_tie_keeps_the_first_glyphs_baseline() {
+    let content = "BT /F1 12 Tf 20 50 Td (m) Tj 5 Ts (2) Tj ET";
+    lands(content, "", &["m2"]);
+    let t = texts(&open_as(&page(content, ""), TextAs::Text));
+    let origin = t[0].xf * Point::ZERO;
+    assert!((origin.y - 150.0).abs() < 1e-6, "on the m's baseline: {origin:?}");
+    assert_eq!(t[0].runs.len(), 2, "{:?}", t[0].runs);
+    assert_eq!(t[0].runs[0].style.baseline_shift, 0.0);
+    assert!((t[0].runs[1].style.baseline_shift - 5.0).abs() < 1e-6, "{:?}", t[0].runs[1].style);
+}
+
+/// The cells of a table's row whose baselines differ a little (a third of an em) stay objects of
+/// their own: only a character that follows on from the one before is raised in its line.
+#[test]
+fn table_cells_a_little_apart_stay_apart() {
+    for content in [
+        "BT /F1 12 Tf 20 50 Td (Cell one) Tj 60 3.6 Td (Cell two) Tj ET",
+        "BT /F1 12 Tf 20 50 Td (Cell one) Tj 60 -3.6 Td (Cell two) Tj ET",
+        "BT /F1 12 Tf 20 50 Td (Cell one) Tj 3.6 Ts 60 0 Td (Cell two) Tj ET",
+    ] {
+        lands(content, "", &["Cell one", "Cell two"]);
+    }
+}
+
+/// Vertical writing with the font's own vertical metrics (/W2): each glyph's position vector puts
+/// the column's centre where the font says (ISO 32000-1 §9.7.4.3), not half the default width.
+#[test]
+fn vertical_type_takes_the_fonts_position_vectors() {
+    lands(&format!("BT /F6 24 Tf 150 180 Td {} Tj ET", gids("§±×")), "", &["§±×"]);
+}
+
+/// A vertical font's metrics as the file gives them: /W2 first, then half the width from /W, then
+/// half /DW; glyphs mapped back to their CIDs through a /CIDToGIDMap stream; a CFF font's glyphs
+/// (whose charset maps them) take /DW's.
+#[test]
+fn vertical_font_metrics_are_read_from_w2_w_and_dw() {
+    use hayro_syntax::Pdf;
+    use hayro_syntax::object::{Dict, ObjectIdentifier};
+    let n = first_extra(1);
+    // CID → glyph: 10 → 5, 20 → 6, 30 → 7, 31 → 9, 40 → 8 (others 0).
+    let mut map = [0u16; 41];
+    for (cid, gid) in [(10, 5), (20, 6), (30, 7), (31, 9), (40, 8)] {
+        map[cid] = gid;
+    }
+    let hex: String = map.iter().map(|g| format!("{g:04X}")).collect::<String>() + ">";
+    let descendant = |subtype: &str, gid_map: &str| {
+        format!(
+            "<< /Type /Font /Subtype /{subtype} /BaseFont /Test /DW 900 /W [10 20 600 30 [400 500]] /W2 [10 [-1000 222 880] 40 41 -1000 333 880] {gid_map} >>"
+        )
+    };
+    let type0 = |enc: &str, d: usize| format!("<< /Type /Font /Subtype /Type0 /BaseFont /Test /Encoding /{enc} /DescendantFonts [{d} 0 R] >>");
+    let objs = [
+        stream("/Filter /ASCIIHexDecode", &hex),                      // n
+        descendant("CIDFontType2", &format!("/CIDToGIDMap {n} 0 R")), // n + 1
+        type0("Identity-V", n + 1),                                   // n + 2
+        descendant("CIDFontType2", ""),                               // n + 3
+        type0("Identity-V", n + 3),                                   // n + 4
+        descendant("CIDFontType0", ""),                               // n + 5
+        type0("Identity-V", n + 5),                                   // n + 6
+        type0("Identity-H", n + 3),                                   // n + 7
+    ];
+    let refs: Vec<&str> = objs.iter().map(String::as_str).collect();
+    let bytes = pdf_with(&[PdfPage::new(100.0, 100.0, "")], &refs, None);
+    let pdf = Pdf::new(Arc::new(bytes)).unwrap();
+    let font = |k: usize| pdf.xref().get::<Dict<'_>>(ObjectIdentifier::new((n + k) as i32, 0)).unwrap();
+    let mapped = crate::import_scan::vertical_metrics(&font(2), true).expect("vertical");
+    for (gid, want) in [(5, 222.0), (6, 300.0), (7, 200.0), (9, 250.0), (8, 333.0), (100, 450.0)] {
+        assert_eq!(mapped.centre(gid), want, "glyph {gid}");
+    }
+    // CIDToGIDMap /Identity: glyph ids are CIDs.
+    let identity = crate::import_scan::vertical_metrics(&font(4), true).expect("vertical");
+    for (gid, want) in [(10, 222.0), (15, 300.0), (31, 250.0), (41, 333.0), (42, 450.0)] {
+        assert_eq!(identity.centre(gid), want, "glyph {gid}");
+    }
+    // A font the file doesn't carry, or a CFF one: its glyphs can't be told by CID.
+    let stand_in = crate::import_scan::vertical_metrics(&font(4), false).expect("vertical");
+    let cff = crate::import_scan::vertical_metrics(&font(6), true).expect("vertical");
+    assert_eq!((stand_in.centre(10), cff.centre(10)), (450.0, 450.0));
+    assert!(crate::import_scan::vertical_metrics(&font(7), true).is_none(), "horizontal");
+}
+
+/// Area type whose lines the file spaced a hair unevenly (`TJ` adjustments of a few thousandths
+/// of an em) still comes back as one text box.
+#[test]
+fn text_boxes_with_a_hair_of_uneven_spacing_still_open_as_one() {
+    let content =
+        "BT /F1 12 Tf 14 TL 20 150 Td [(The qu) -4 (ick brown fox )] TJ T* [(jumps o) 5 (ver the) -3 ( lazy )] TJ T* (dog and runs away.) Tj ET";
+    let t = texts(&open_as(&page(content, ""), TextAs::Text));
+    assert_eq!(t.len(), 1, "one text box: {:?}", t.iter().map(TextObject::plain_text).collect::<Vec<_>>());
+    assert!(matches!(t[0].kind, TextKind::Area { .. }));
+    assert_eq!(t[0].plain_text(), PARAGRAPH_TEXT);
+    assert!(displacement(&page(content, "")) < 0.1);
+}
+
+/// Word spacing the same on every line of a text box, its last line too, is the type's: it comes
+/// back as one text box, aligned left, its spaces tracked apart.
+#[test]
+fn text_boxes_word_spaced_throughout_open_as_one() {
+    let content = format!("BT /F1 12 Tf 14 TL 2 Tw 20 150 Td {PARAGRAPH} ET");
+    let t = texts(&open_as(&page(&content, ""), TextAs::Text));
+    assert_eq!(t.len(), 1, "one text box: {:?}", t.iter().map(TextObject::plain_text).collect::<Vec<_>>());
+    assert!(matches!(t[0].kind, TextKind::Area { .. }));
+    assert_eq!(t[0].para.justify, vectorcraft_doc::Justify::Left);
+    let spaces: Vec<f64> = t[0].runs.iter().filter(|r| r.text.trim().is_empty()).map(|r| r.style.tracking).collect();
+    assert!(!spaces.is_empty() && spaces.iter().all(|s| (s - 2.0 / 12.0 * 1000.0).abs() < 1.0), "{:?}", t[0].runs);
+    lands(&content, "", &[PARAGRAPH_TEXT]);
+}
+
+/// A text-heavy page: `columns` columns of `rows` lines of 10 pt type, alternately plain lines and
+/// paragraphs wrapped in a frame (left aligned, and justified with word spacing).
+fn text_heavy(columns: usize, rows: usize) -> Vec<u8> {
+    const WORDS: [&str; 12] = ["Gather", "the", "quick", "brown", "fox", "over", "lazy", "dogs", "while", "AVATAR", "waves", "kerning"];
+    let mut content = String::new();
+    for c in 0..columns {
+        let x = 20.0 + c as f64 * 200.0;
+        content += &format!("BT /F1 10 Tf 12 TL {x} {} Td ", 40.0 + rows as f64 * 12.0);
+        for r in 0..rows {
+            let words: Vec<&str> = (0..6).map(|k| WORDS[(c * 7 + r * 5 + k) % WORDS.len()]).collect();
+            let wrapped = c % 2 == 1 && r % 6 != 5;
+            let tw = if c % 4 == 3 && wrapped { 1.5 } else { 0.0 };
+            content += &format!("{tw} Tw ({}{}) Tj T* ", words.join(" "), if wrapped { " " } else { "" });
+        }
+        content += "ET ";
+    }
+    sized_page(40.0 + columns as f64 * 200.0, 80.0 + rows as f64 * 12.0, &content, "")
+}
+
+/// How long a text-heavy file takes to open as type (run by hand: `-- --ignored --nocapture`).
+#[test]
+#[ignore]
+fn perf_text_heavy_open() {
+    let bytes = text_heavy(20, 200);
+    for _ in 0..2 {
+        let start = std::time::Instant::now();
+        let d = open_as(&bytes, TextAs::Text);
+        let took = start.elapsed();
+        let n = texts(&d).len();
+        let start = std::time::Instant::now();
+        let _ = open_as(&bytes, TextAs::Outlines);
+        println!("4000 lines: {n} text objects in {took:?} (as outlines: {:?})", start.elapsed());
+    }
 }
