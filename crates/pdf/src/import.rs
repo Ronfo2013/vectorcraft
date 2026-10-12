@@ -1431,9 +1431,8 @@ impl<'p> Builder<'p> {
             return false;
         }
         let width = o.advance_width().filter(|w| w.is_finite());
-        // Set vertically (WMode 1): no horizontal advance; its em box is a full em wide.
+        // Set vertically (WMode 1): no horizontal advance.
         let upright = width.is_some_and(|w| w.abs() <= 1.0);
-        let top = m * kurbo::Point::new(f64::from(width.filter(|w| *w > 1.0).unwrap_or(1000.0)) * 0.5, 880.0);
         let mut info = self.font_name(key, o);
         // A font the file doesn't carry is drawn with a stand-in: its glyphs can't tell which
         // style of the installed family it is, so the name decides.
@@ -1470,6 +1469,20 @@ impl<'p> Builder<'p> {
             None if self.matched.contains_key(&key) => self.versions.entry(key).or_insert_with(|| named(&info.face)).clone(),
             None => named(&info.face),
         };
+        // A glyph set vertically is drawn from its origin, which the file puts half the glyph's
+        // width to the left of the column's centre (ISO 32000-1 §9.7.4.3); vertical type centres
+        // each glyph's advance on the column. So the column's centre is half the glyph's advance
+        // to the right of its origin: half an em only for a full-width glyph (#722).
+        let width_across = info
+            .face
+            .as_ref()
+            .and_then(|f| {
+                let g = f.glyph_for(text.chars().next()?);
+                (g != 0).then(|| f.advance(g) * 1000.0 / f.units_per_em())
+            })
+            .filter(|w| w.is_finite() && *w > 0.0 && *w < 10_000.0)
+            .unwrap_or(1000.0);
+        let top = m * kurbo::Point::new(width_across * 0.5, 880.0);
         let (paint, opacity) = self.paint(paint, stroke.is_some());
         let stroke = stroke.map(|p| (paint.clone(), p.line_width as f64 * scale));
         let look = Look {

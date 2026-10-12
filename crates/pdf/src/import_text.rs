@@ -1,6 +1,8 @@
 //! Text as editable point type: glyphs drawn one after another on the same baseline make one
 //! point text object of their Unicode text, a run per font, size and paint (a gap wider than a
-//! fifth of the size reads as a space). Fonts are named from the file's base font name (its
+//! fifth of the size reads as a space; a glyph the file raised or lowered off the baseline, text
+//! rise, is baseline shift). Each glyph stays where the file drew it: the kerning and tracking
+//! the type takes put it there (#722). Fonts are named from the file's base font name (its
 //! subset prefix dropped, the family matched against the fonts available); a font that isn't
 //! available keeps its name, and the text shows in the fallback font until it is.
 //!
@@ -125,7 +127,13 @@ pub(crate) struct TextLine {
     last_dir: Vec2,
     /// Each glyph's baseline origin, then where the last one ends.
     baseline: Vec<Point>,
-    runs: Vec<(Look, String)>,
+    /// Runs of glyphs drawn alike: their look, how far the file raised them off the line's
+    /// baseline (points, up; text rise, `Ts`), their text.
+    runs: Vec<(Look, f64, String)>,
+    /// Where the file put each character of the runs' text, in order: the first character of each
+    /// glyph has its glyph's [`Slot`]; a space read from a gap and the other characters of a
+    /// glyph of several have none.
+    slots: Vec<Option<Slot>>,
     /// The first glyph was set vertically ([`Upright`]).
     upright: Option<Upright>,
     /// The glyphs make a column (vertical type), each below the last.
@@ -136,8 +144,14 @@ pub(crate) struct TextLine {
     /// The spaces read from gaps between glyphs: their byte offset in the text, and the gap from
     /// the end of the glyph before to the start of the next (points).
     gaps: Vec<(usize, f64)>,
-    /// Each glyph's advance in the file's font (points), with [`Self::baseline`].
-    advances: Vec<f64>,
+}
+
+/// Where the file put a glyph: the glyph's index in the line, and its advance in the file's font
+/// (points) when it shows one character (`None` for a ligature's several).
+#[derive(Clone, Copy, Debug)]
+struct Slot {
+    glyph: usize,
+    advance: Option<f64>,
 }
 
 /// What a finished line of type tells beyond its text object (see [`crate::import_lines`]).
@@ -166,11 +180,11 @@ impl TextLine {
             last_dir: at.dir,
             baseline: vec![],
             runs: vec![],
+            slots: vec![],
             upright: None,
             column: false,
             ink: vec![],
             gaps: vec![],
-            advances: vec![],
         }
     }
 
@@ -180,8 +194,8 @@ impl TextLine {
     pub fn push_upright(&mut self, look: &Look, at: Placement, opacity: f32, upright: Upright, text: &str) -> bool {
         let down = -self.at.up();
         let size = self.at.size.max(at.size);
-        let Some((last, run)) = self.runs.last_mut() else {
-            self.runs.push((look.clone(), text.to_string()));
+        let Some((last, _, run)) = self.runs.last_mut() else {
+            self.runs.push((look.clone(), 0.0, text.to_string()));
             (self.upright, self.next, self.last) = (Some(upright), at.origin + down * at.size, at.origin);
             return true;
         };
@@ -209,7 +223,7 @@ impl TextLine {
         if last.takes(look) {
             run.push_str(text);
         } else {
-            self.runs.push((look.clone(), text.to_string()));
+            self.runs.push((look.clone(), 0.0, text.to_string()));
         }
         self.next = at.origin + down * at.size;
         self.last = at.origin;
@@ -223,17 +237,29 @@ impl TextLine {
         if self.column || self.upright.is_some() {
             return false;
         }
-        let bytes: usize = self.runs.iter().map(|(_, t)| t.len()).sum();
-        if let Some((last, run)) = self.runs.last_mut() {
+        let bytes: usize = self.runs.iter().map(|(_, _, t)| t.len()).sum();
+        let glyph = self.baseline.len();
+        let curved = self.curved();
+        let mut shift = 0.0;
+        if let Some((last, last_shift, run)) = self.runs.last_mut() {
             let size = self.at.size.max(at.size);
             let gap = (at.origin - self.next).dot(self.last_dir);
+            // How far the glyph sits above the line's baseline. The file raises a superscript or
+            // lowers a subscript (text rise, `Ts`) with the glyphs turned exactly as the rest of
+            // the line: it stays on the line, shifted off its baseline, up to half an em.
+            let above = (at.origin - self.at.origin).dot(self.at.up());
+            let level = at.dir.dot(self.at.dir) > 1.0 - 1e-9 && !curved;
             let on_line = opacity == self.opacity
                 && at.dir.dot(self.at.dir) > 0.9995
                 && (at.slant - self.at.slant).abs() < 1e-3
-                && (at.origin - self.at.origin).dot(self.at.up()).abs() < size * 0.15
+                && (above.abs() < size * 0.15 || (level && above.abs() < size * 0.5))
                 // Proportional widths close CJK marks up by up to half an em.
                 && gap > -size * 0.6
                 && gap < size * 3.0;
+            // Within a hair of the baseline (rounding in the file) is on it.
+            if on_line && above.abs() > size * 0.01 {
+                shift = above;
+            }
             // Or on a curve: turned a little from the glyph before it, and starting about where
             // that one ends.
             let on_curve = !on_line
@@ -248,18 +274,22 @@ impl TextLine {
             // A gap wider than a fifth of an em reads as a space.
             if gap > size * 0.2 && !run.ends_with(' ') && !text.starts_with(' ') {
                 run.push(' ');
+                self.slots.push(None);
                 if on_line {
                     self.gaps.push((bytes, gap));
                 }
             }
-            if last.takes(look) {
+            if last.takes(look) && (*last_shift - shift).abs() < 1e-3 {
                 run.push_str(text);
             } else {
-                self.runs.push((look.clone(), text.to_string()));
+                self.runs.push((look.clone(), shift, text.to_string()));
             }
         } else {
-            self.runs.push((look.clone(), text.to_string()));
+            self.runs.push((look.clone(), 0.0, text.to_string()));
         }
+        let one = text.chars().count() == 1;
+        self.slots.push(Some(Slot { glyph, advance: one.then_some(advance) }));
+        self.slots.extend(text.chars().skip(1).map(|_| None));
         self.next = at.origin + at.dir * advance;
         if !text.trim().is_empty() {
             self.visible = self.next;
@@ -267,7 +297,6 @@ impl TextLine {
         self.last = at.origin;
         self.last_dir = at.dir;
         self.baseline.push(at.origin);
-        self.advances.push(advance);
         true
     }
 
@@ -303,7 +332,7 @@ impl TextLine {
     /// A stroke (`stroke`: paint and width) over the glyph just drawn at `at` in `font` (fill
     /// and stroke rendering): the run is stroked. `false`: it isn't that glyph.
     pub fn stroke_last(&mut self, font: u128, at: Placement, stroke: (Paint, f64)) -> bool {
-        let Some((look, _)) = self.runs.last_mut().filter(|(l, _)| l.font == font && (at.origin - self.last).hypot() < self.at.size * 1e-3) else {
+        let Some((look, ..)) = self.runs.last_mut().filter(|(l, ..)| l.font == font && (at.origin - self.last).hypot() < self.at.size * 1e-3) else {
             return false;
         };
         look.stroke = Some(stroke);
@@ -315,15 +344,38 @@ impl TextLine {
         let mut facts = LineFacts { ink: std::mem::take(&mut self.ink), ..LineFacts::default() };
         // Turned along a curve: type on a path through the glyphs.
         let path = if self.curved() { self.baseline_path() } else { None };
-        facts.wraps = path.is_none() && self.upright.is_none() && self.runs.last().is_some_and(|(_, t)| t.ends_with(' '));
-        if let Some((_, last)) = self.runs.last_mut() {
+        facts.wraps = path.is_none() && self.upright.is_none() && self.runs.last().is_some_and(|(.., t)| t.ends_with(' '));
+        if let Some((.., last)) = self.runs.last_mut() {
             last.truncate(last.trim_end().len());
         }
-        self.runs.retain(|(_, t)| !t.is_empty());
-        if self.runs.iter().all(|(_, t)| t.trim().is_empty()) {
+        self.runs.retain(|(.., t)| !t.is_empty());
+        if self.runs.iter().all(|(.., t)| t.trim().is_empty()) {
             return None;
         }
-        let mut runs = self.runs.into_iter().map(|(look, text)| TextRun { text, style: look.style(), inline: None });
+        // The spaces trimmed off the end have no place either.
+        let chars: usize = self.runs.iter().map(|(.., t)| t.chars().count()).sum();
+        self.slots.truncate(chars);
+        // The baseline most of the characters sit on is the line's: the others are shifted off it
+        // (a line starting with a raised footnote mark keeps the baseline of its text).
+        let mut on: Vec<(f64, usize)> = vec![];
+        for (_, shift, text) in &self.runs {
+            let n = text.chars().count();
+            match on.iter_mut().find(|(s, _)| (s - shift).abs() < 1e-3) {
+                Some((_, count)) => *count += n,
+                None => on.push((*shift, n)),
+            }
+        }
+        let base = on.iter().max_by_key(|(_, n)| *n).map_or(0.0, |(s, _)| *s);
+        if base != 0.0 && path.is_none() {
+            self.at.origin += self.at.up() * base;
+            for (_, shift, _) in &mut self.runs {
+                *shift -= base;
+            }
+        }
+        let mut runs = self.runs.into_iter().map(|(look, shift, text)| {
+            let style = CharStyle { baseline_shift: round(shift), ..look.style() };
+            TextRun { text, style, inline: None }
+        });
         let first = runs.next()?;
         let mut t = TextObject::point(Point::ORIGIN, &first.text, first.style);
         t.runs.extend(runs);
@@ -334,13 +386,13 @@ impl TextLine {
         // The glyphs' tops lean along the baseline (+x), up being -y in the type's own space.
         t.xf = Affine::translate(self.at.origin.to_vec2()) * Affine::rotate(angle) * Affine::skew(-self.at.slant, 0.0);
         let db = vectorcraft_text::FontDb::global();
-        // Glyphs spaced each their own way (character tightening, optical kerning) keep their
-        // place: each character its own tracking.
-        let own = (self.upright.is_none() && t.para.direction.is_none())
-            .then(|| own_spacing(&t, &self.baseline, &self.advances, path.as_ref(), self.at.dir, self.at.size))
+        // Each glyph where the file put it (#722): the kerning (the font's, or none) and tracking
+        // (one value for the line, or each character its own) that place them there.
+        let placed = (self.upright.is_none() && t.para.direction.is_none())
+            .then(|| place_each(&t, &self.slots, &self.baseline, path.as_ref(), self.at.dir, self.at.size))
             .flatten();
-        if let Some(own) = &own {
-            t.runs = tracked_each(std::mem::take(&mut t.runs), own, self.at.size);
+        if let Some(runs) = placed.clone() {
+            t.runs = runs;
         }
         if let Some(path) = path {
             t.kind = TextKind::OnPath { path: vectorcraft_geom::PathData::from_bezpath(&path), start: 0.0, end: None };
@@ -371,7 +423,7 @@ impl TextLine {
         let chars: usize = t.runs.iter().map(|r| r.text.chars().count()).sum();
         let size = self.at.size;
         let mut bounds = laid.bounds;
-        if own.is_none() && chars > 1 && length.is_finite() && (length - natural).abs() > size * 0.01 {
+        if placed.is_none() && chars > 1 && length.is_finite() && (length - natural).abs() > size * 0.01 {
             // The spaces read from gaps keep their own place only in text left in the file's order.
             let total: usize = t.runs.iter().map(|r| r.text.len()).sum();
             let gaps: Vec<(usize, f64)> =
@@ -386,49 +438,30 @@ impl TextLine {
     }
 }
 
-/// The space each glyph of `t` (laid out untracked) leaves after its advance to put the next one
-/// where the file did (points; the last glyph's is the one before it), when that varies by more
-/// than a fiftieth of an em: one tracking value can't place them. Glyph origins are `baseline`,
-/// measured along `path` (type on a path: one curve per glyph) or along `dir`. None when the
-/// glyphs can't be matched to the characters one to one (spaces, ligatures), or when the font
-/// laid out isn't the file's (its advances differ from `advances`): spacing measured against a
-/// stand-in's widths would keep the stand-in's differences once the font is installed.
-fn own_spacing(t: &TextObject, baseline: &[Point], advances: &[f64], path: Option<&BezPath>, dir: Vec2, size: f64) -> Option<Vec<f64>> {
-    let text: String = t.runs.iter().map(|r| r.text.as_str()).collect();
-    let chars = text.chars().count();
-    if chars < 3 || text.contains(' ') || baseline.len() != chars || advances.len() != chars {
-        return None;
-    }
+/// How far along the line (points) each character of `t` (laid out as it is) starts: by byte
+/// offset, its distance from the start and its advance. Text in the file's order (left to right).
+fn pens(t: &TextObject) -> HashMap<usize, (f64, f64)> {
     let laid = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
-    let advs: Vec<f64> = laid.glyphs.iter().map(|g| g.advance).collect();
-    if advs.len() != chars || advs.iter().zip(advances).any(|(a, b)| (a - b).abs() > size * 0.01) {
-        return None;
+    let mut at = HashMap::with_capacity(laid.glyphs.len());
+    let mut pen = 0.0;
+    for g in &laid.glyphs {
+        at.entry(g.byte).or_insert((pen, g.advance));
+        pen += g.advance;
     }
-    let dist: Vec<f64> = match path {
-        Some(bp) => bp.segments().take(chars - 1).map(|seg| kurbo::ParamCurveArclen::arclen(&seg, 1e-3)).collect(),
-        None => baseline.windows(2).map(|w| (w[1] - w[0]).dot(dir)).collect(),
-    };
-    if dist.len() != chars - 1 {
-        return None;
-    }
-    let mut extra: Vec<f64> = dist.iter().zip(&advs).map(|(d, a)| d - a).collect();
-    let mean = extra.iter().sum::<f64>() / extra.len() as f64;
-    if extra.iter().all(|e| (e - mean).abs() <= size * 0.02) {
-        return None;
-    }
-    extra.push(*extra.last()?);
-    Some(extra)
+    at
 }
 
-/// `runs` with each character's tracking from `own` (points, one per character), characters with
-/// the same tracking kept in one run.
-fn tracked_each(runs: Vec<TextRun>, own: &[f64], size: f64) -> Vec<TextRun> {
-    let em = |pts: f64| (pts / size * 1000.0).clamp(-1000.0, 1000.0).round();
+/// `t`'s runs with kerning `kern` and each character's tracking from `own` (points, one per
+/// character, in thousandths of each run's em), characters alike kept in one run.
+fn restyled(t: &TextObject, kern: Option<f64>, own: &[f64]) -> Vec<TextRun> {
     let mut out: Vec<TextRun> = vec![];
     let mut k = 0;
-    for r in runs {
+    for r in &t.runs {
+        let size = r.style.size.max(1e-3);
         for c in r.text.chars() {
-            let style = CharStyle { tracking: own.get(k).map_or(0.0, |e| em(*e)), ..r.style.clone() };
+            let tracking = own.get(k).map_or(0.0, |e| (e / size * 1000.0).clamp(-1000.0, 1000.0));
+            // Hundredths of a thousandth of an em: no drift along a line, no noise in the panels.
+            let style = CharStyle { tracking: (tracking * 100.0).round() / 100.0, kerning: kern, ..r.style.clone() };
             k += 1;
             match out.last_mut() {
                 Some(last) if last.style == style && last.inline == r.inline => last.text.push(c),
@@ -437,6 +470,120 @@ fn tracked_each(runs: Vec<TextRun>, own: &[f64], size: f64) -> Vec<TextRun> {
         }
     }
     out
+}
+
+/// The runs of `t` that put its glyphs where the file did (#722): with the font's kerning or none,
+/// whichever the file's spacing follows, and tracking that is the same after every character when
+/// the file spaced them evenly, else each character's own (word spacing, `TJ` adjustments,
+/// character tightening, spaces read from gaps).
+///
+/// The file put the glyph of each character with a [`Slot`] at `baseline` (one origin per glyph),
+/// measured along `path` (type on a path: one curve per glyph) or along `dir`. `None` when the
+/// font laid out isn't the file's (its advances differ from the file's): spacing measured against
+/// a stand-in's widths would keep the stand-in's differences once the font is installed; or when
+/// the glyphs can't be placed so (the layout joins characters the file drew apart).
+fn place_each(t: &TextObject, slots: &[Option<Slot>], baseline: &[Point], path: Option<&BezPath>, dir: Vec2, size: f64) -> Option<Vec<TextRun>> {
+    let chars: Vec<usize> = t
+        .runs
+        .iter()
+        .scan(0, |off, r| {
+            let base = *off;
+            *off += r.text.len();
+            Some(r.text.char_indices().map(move |(i, _)| base + i).collect::<Vec<_>>())
+        })
+        .flatten()
+        .collect();
+    if chars.len() < 2 || chars.len() != slots.len() || t.runs.iter().any(|r| r.inline.is_some()) {
+        return None;
+    }
+    let first = *baseline.first()?;
+    // How far along the line the file put each glyph.
+    let along: Vec<f64> = match path {
+        Some(bp) => std::iter::once(0.0)
+            .chain(bp.segments().scan(0.0, |d, seg| {
+                *d += kurbo::ParamCurveArclen::arclen(&seg, 1e-3);
+                Some(*d)
+            }))
+            .take(baseline.len())
+            .collect(),
+        None => baseline.iter().map(|p| (*p - first).dot(dir)).collect(),
+    };
+    // Each character's target: where the file put it, if it put it anywhere.
+    let target: Vec<Option<(f64, Option<f64>)>> = slots.iter().map(|s| s.and_then(|s| Some((*along.get(s.glyph)?, s.advance)))).collect();
+    if target.first().is_none_or(Option::is_none) || target.iter().flatten().any(|(d, _)| !d.is_finite()) {
+        return None;
+    }
+    let untracked = |kern: Option<f64>| {
+        let mut u = t.clone();
+        u.runs = restyled(t, kern, &[]);
+        pens(&u)
+    };
+    // The spacing each character takes after it, with kerning `kern`: whatever puts the next one
+    // the file placed where it did. Characters between two the file placed (a space read from a
+    // gap, the rest of a ligature) take the line's spacing, the last of them the rest.
+    let spacing = |pens: &HashMap<usize, (f64, f64)>| -> Option<Vec<f64>> {
+        // How far each character the file placed is from where the layout puts it.
+        let placed: Vec<(usize, f64)> =
+            chars.iter().zip(&target).enumerate().filter_map(|(i, (b, t))| Some((i, t.as_ref()?.0 - pens.get(b)?.0))).collect();
+        let steps: Vec<f64> = placed.windows(2).filter(|w| w[1].0 == w[0].0 + 1).map(|w| w[1].1 - w[0].1).collect();
+        let line = median(steps).unwrap_or(0.0);
+        let mut own = vec![line; chars.len()];
+        for w in placed.windows(2) {
+            let ((a, da), (b, db)) = (w[0], w[1]);
+            *own.get_mut(b.checked_sub(1)?)? = db - da - line * (b - a - 1) as f64;
+        }
+        // After the last character the file placed, spacing changes nothing: the line's.
+        let last = placed.last()?.0;
+        let tail = if last > 0 { own.get(last - 1).copied().unwrap_or(line) } else { line };
+        for e in own.get_mut(last..).into_iter().flatten() {
+            *e = tail;
+        }
+        Some(own)
+    };
+    // Evenly spaced: one tracking value for the line, and how far the most uneven character is
+    // from it. (A file rounds its widths to thousandths of an em: a hair either way is even.)
+    let even = |own: &[f64]| {
+        let line = median(own.to_vec())?;
+        let worst = own.iter().map(|e| (e - line).abs()).fold(0.0, f64::max);
+        (worst <= size * 0.002).then(|| (vec![line; own.len()], worst))
+    };
+    let changes = |own: &[f64]| own.windows(2).filter(|w| (w[1] - w[0]).abs() > size * 1e-4).count();
+    // Without kerning, the layout's advances are the font's: the file's, if the font is.
+    let plain = untracked(Some(0.0));
+    let same_font = chars.iter().zip(&target).all(|(b, t)| match t {
+        Some((_, Some(adv))) => plain.get(b).is_some_and(|(_, a)| (a - adv).abs() <= size * 0.01),
+        _ => true,
+    });
+    if !same_font {
+        return None;
+    }
+    let unkerned = spacing(&plain)?;
+    let kerned = spacing(&untracked(None))?;
+    // The font's kerning when the file followed it (or there is none to follow), else none.
+    let (kern, own) = match (even(&kerned), even(&unkerned)) {
+        (Some((own, a)), Some((_, b))) if a <= b => (None, own),
+        (_, Some((own, _))) => (Some(0.0), own),
+        (Some((own, _)), None) => (None, own),
+        _ if changes(&unkerned) < changes(&kerned) => (Some(0.0), unkerned),
+        _ => (None, kerned),
+    };
+    let runs = restyled(t, kern, &own);
+    // Laid out so, are they where the file put them? (A ligature the layout forms where the file
+    // drew two glyphs moves those after it.)
+    let mut check = t.clone();
+    check.runs = runs.clone();
+    let got = pens(&check);
+    let ok = chars.iter().zip(&target).all(|(b, t)| match t {
+        Some((d, _)) => got.get(b).is_some_and(|(p, _)| (p - d).abs() <= size * 0.02),
+        None => true,
+    });
+    ok.then_some(runs)
+}
+
+/// The middle value of `v` (the upper one of an even count).
+fn median(mut v: Vec<f64>) -> Option<f64> {
+    v.sort_by(f64::total_cmp);
+    v.get(v.len() / 2).copied()
 }
 
 /// The tracking (thousandths of an em) that sets a line of `chars` characters, laid out untracked

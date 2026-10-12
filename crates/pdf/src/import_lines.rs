@@ -154,15 +154,22 @@ fn area_type(nodes: &[Arc<Node>], lines: &HashMap<NodeId, LineFacts>, b: &Block)
     let texts: Vec<(&TextObject, &LineFacts)> = nodes.iter().map(|n| line(n, lines)).collect::<Option<_>>()?;
     let (first, _) = texts.first()?;
     let size = first.first_style().size;
-    // Each line's tracking (a line with spaces tracked apart was set by hand).
-    let trackings: Vec<f64> = texts
+    // Each line's tracking after its letters, and whether its spaces take the same: a justified line
+    // spaces its words out (word spacing, `Tw`), which justification does again (#722). A line
+    // whose letters are tracked apart was set by hand.
+    let lines: Vec<(f64, bool)> = texts
         .iter()
         .map(|(t, _)| {
-            let mut all = t.runs.iter().map(|r| r.style.tracking);
-            let one = all.next()?;
-            all.all(|x| x == one).then_some(one)
+            let mut letters = t.runs.iter().filter(|r| !r.text.trim().is_empty()).map(|r| r.style.tracking);
+            let one = letters.next()?;
+            letters.all(|x| (x - one).abs() < 0.01).then_some(())?;
+            Some((one, t.runs.iter().all(|r| (r.style.tracking - one).abs() < 0.01)))
         })
         .collect::<Option<_>>()?;
+    let trackings: Vec<f64> = lines.iter().map(|(t, _)| *t).collect();
+    // Spaces spread apart only on wrapped lines, and only for justified type.
+    let spread = lines.iter().any(|(_, even)| !even);
+    let wrapped_only = lines.iter().zip(&texts).all(|((_, even), (_, f))| *even || f.wraps);
     let median = |mut v: Vec<f64>| {
         v.sort_by(f64::total_cmp);
         v.get(v.len() / 2).copied()
@@ -173,13 +180,15 @@ fn area_type(nodes: &[Arc<Node>], lines: &HashMap<NodeId, LineFacts>, b: &Block)
     // Wrapped lines all as long: justified (a paragraph's last line aligned left), tracked as the
     // lines that end paragraphs are (the others are spaced out).
     let full = longest(&wrapped);
-    if wrapped.len() >= 2 && wrapped.iter().all(|l| (full - l).abs() <= size * 0.02) {
+    if wrapped.len() >= 2 && wrapped_only && wrapped.iter().all(|l| (full - l).abs() <= size * 0.02) {
         let ends: Vec<f64> = texts.iter().zip(&trackings).filter(|((_, f), _)| !f.wraps).map(|(_, t)| *t).collect();
         let tracking = median(ends).or_else(|| trackings.iter().copied().reduce(f64::min))?;
         tries.push((Justify::JustifyLeft, full, tracking));
     }
     let all: Vec<f64> = texts.iter().map(|(_, f)| f.length).collect();
-    tries.push((Justify::Left, longest(&all) + size * 0.02, median(trackings)?));
+    if !spread {
+        tries.push((Justify::Left, longest(&all) + size * 0.02, median(trackings)?));
+    }
     tries.into_iter().find_map(|(justify, width, tracking)| laid_out(&texts, b, justify, width, tracking))
 }
 
