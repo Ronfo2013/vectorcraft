@@ -4147,3 +4147,4 @@ lighting	Light	ライト
 @msg	unsupported native docking operation	ネイティブドッキング操作は未対応です
 	Linux Display Server	Linux ディスプレイサーバー
 	X11 (XWayland)	X11 (XWayland)
+@msg	{PATCH} (over the size limit)	{PATCH}（サイズ上限を超過）

@@ -4153,3 +4153,4 @@ lighting	Light	Luce
 @msg	unsupported native docking operation	Operazione nativa di ancoraggio non supportata
 	Linux Display Server	Server di visualizzazione Linux
 	X11 (XWayland)	X11 (XWayland)
+@msg	{PATCH} (over the size limit)	{PATCH} (oltre il limite di dimensione)

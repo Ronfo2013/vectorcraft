@@ -17,11 +17,11 @@ pub(super) fn stream(body: &str) -> String {
 }
 
 /// One layer named `L` holding `art`.
-fn layer(art: &str) -> String {
+pub(super) fn layer(art: &str) -> String {
     format!("%AI5_BeginLayer\n1 1 1 1 0 0 1 0 79 128 255 0 50 0 Lb\n(L) Ln\n0 A\n0 Xw\n{art}\nLB\n%AI5_EndLayer--\n")
 }
 
-fn read_ok(body: &str) -> Structure {
+pub(super) fn read_ok(body: &str) -> Structure {
     match read(stream(body).as_bytes()) {
         Ok(i) => i,
         Err(e) => panic!("{e}"),

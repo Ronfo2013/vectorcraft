@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every known shortfall against Illustrator, one entry each, **ranked by how much it stops a professional from
 switching**. This is the work list: unless you were given a task, pick the highest-ranked gap you can make
@@ -68,9 +68,9 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
   stopped by two operators the reader didn't know, which write a gradient mesh (`/Mesh X!` … `/End X!`): now
   unknown operators between objects are skipped with a note, objects of kinds the reader doesn't read are
   left out with a loss note, every artboard is compared with its page, and the file opens from its editing
-  data (groups, compound paths, named artboards) with its 3 meshes left out. **Next:** read gradient meshes
-  from the editing data (the structure is known: `/Size`, `/Data`, per node `/P`, `/R`, `/CS`, `/S`, `/N`,
-  `/E` entries). Still open: guides when a file falls back to its PDF part (#779: the PDF part
+  data (groups, compound paths, named artboards); its 3 gradient meshes are read too (`/Mesh X!` objects as
+  Coons patches, `crates/eps/src/import/ai/mesh.rs`, matched against the PDF part's patch shadings), so
+  nothing of it is left out. Still open: guides when a file falls back to its PDF part (#779: the PDF part
   has none), the page comparison's cost on large files (#758: the reader itself reads 50 000 objects in
   0.6 s in the optimized test profile), legacy type in `.ai` files in PostScript form (those without their prolog open since
   #1027), live effects, brushes and symbols as live objects (#637; pattern fills and global colours are read
@@ -244,6 +244,7 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 |---|---|---|
 | 2026-10-11 | minor | G11: #834 fixed (a tool drag's preview skipped the pointer position in the frame it came back into the window, and the move in the release's frame, so a handle or anchor stayed behind until the next move and the release committed the stale shape); estimate unchanged |
 | 2026-10-11 | minor | G11: #864 fixed (SVG saves wrote unitless sizes, so a document in mm/in/pt reopened in pixels); estimate unchanged |
+| 2026-10-12 | minor | G9: gradient meshes read from `.ai` editing data; the user's Illustrator 30.8 file opens whole; estimate unchanged |
 | 2026-10-11 | minor | G9: a real Illustrator 30.8 file opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared with its page); next: read gradient meshes; estimate unchanged |
 | 2026-10-11 | minor | G9: layer structure of the editing data audited and property-tested; PDF layers repeated per page merged; unreadable private data named in the notes (#951, #868, #779, #758); estimate unchanged, needs the users' files |
 | 2026-10-11 | minor | G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options (effect parameters, rendering, Expand Appearance, dialog, command docs) and its dialog's Options checkboxes drawn (#885); estimate unchanged, #937 open |

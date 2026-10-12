@@ -66,6 +66,7 @@ pub fn is_loss(note: &str) -> bool {
             ART_LEFT_OUT,
             LAYERS_UNREAD,
             ai::OBJECTS_LEFT_OUT,
+            ai::MESH_OPACITY_UNREAD,
             ai::OPERATORS_SKIPPED_UNCHECKED,
             UNCOMPARED,
             super::graphics::TOO_MUCH,
