@@ -484,7 +484,7 @@ impl Tool for DirectSelectionTool {
                     self.state = State::MoveAnchors { start, grab, began: true };
                     self.anchor_snap = Some(PointSnap::new(cx, || Targets::for_anchor_drag(cx.doc, cx.selection)));
                 }
-                let mut d = move_delta(start, p, ev.mods.shift);
+                let mut d = move_delta(start, p, ev.mods.shift, cx.constrain_angle);
                 // The grabbed anchor snaps and the others follow it. Shift keeps the move at its
                 // angle, and the anchor slides along it onto what Smart Guides find there (#886).
                 self.guides.clear();
@@ -528,7 +528,7 @@ impl Tool for DirectSelectionTool {
                         self.move_snap = Some(MoveSnap::new(cx));
                     }
                 }
-                let mut d = move_delta(start, p, ev.mods.shift);
+                let mut d = move_delta(start, p, ev.mods.shift, cx.constrain_angle);
                 self.guides.clear();
                 let snap = if ev.mods.alt { &self.copy_snap } else { &self.anchor_snap };
                 if let (Some(grab), Some(snap)) = (grab, snap) {
@@ -552,7 +552,7 @@ impl Tool for DirectSelectionTool {
                     }
                     out.push(Action::Begin("Reshape Type Area".into()));
                 }
-                let d = move_delta(start, p, ev.mods.shift);
+                let d = move_delta(start, p, ev.mods.shift, cx.constrain_angle);
                 out.push(Action::Preview("text.reshapeArea".into(), json!({"id": id.0, "anchors": anchors_json(&anchors), "dx": d.x, "dy": d.y})));
                 self.state = State::TypeArea { id, anchors, start, began: true };
                 out
@@ -574,7 +574,7 @@ impl Tool for DirectSelectionTool {
                     out.push(Action::Begin("Reshape Spine".into()));
                     self.state = State::SpinePoint { id, anchor, from, start, began: true };
                 }
-                let q = from + move_delta(start, p, ev.mods.shift);
+                let q = from + move_delta(start, p, ev.mods.shift, cx.constrain_angle);
                 out.push(Action::Preview("object.blend.spine.moveAnchor".into(), json!({"id": id.0, "anchor": anchor, "x": q.x, "y": q.y})));
                 out
             }
@@ -1297,7 +1297,7 @@ mod tests {
         assert!(near(&v, (-100.0, -100.0)) && labels == ["anchor"], "{v} {labels:?}");
         // …and with nothing in reach, at the pointer's distance along its angle.
         let (v, labels) = drag(&mut t, &c, (300.0, 300.0), (380.0, 302.0), shift);
-        let s = move_delta(Point::new(300.0, 300.0), Point::new(380.0, 302.0), true);
+        let s = move_delta(Point::new(300.0, 300.0), Point::new(380.0, 302.0), true, 0.0);
         assert!(near(&v, (s.x, s.y)) && labels.is_empty(), "{v} {labels:?}");
         // Two anchors: the one pressed on (B's top-right) lands on A's corner.
         let two = anchors_of(b, &[(0, 0), (0, 1)]);

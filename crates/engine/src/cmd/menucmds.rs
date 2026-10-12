@@ -401,6 +401,9 @@ fn rasterize(s: &mut Session, p: &Value) -> Result<Value> {
             _ => {}
         }
     }
+    // Appearance of Black › For Printing/Exporting is left out on purpose: Rasterize makes art in
+    // the document, not output, and the preference only changes how black ink is shown in RGB
+    // files and prints, never the document's colours.
     let raster = RasterExportOptions { ppi, background, anti_alias, ..Default::default() };
     let pad = look.add_around;
     let b = st.doc.bounds_of(&roots, true).ok_or_else(|| bad(C, "selection has no bounds"))?.inflate(pad, pad);
@@ -570,7 +573,8 @@ fn crop_image(s: &mut Session, p: &Value) -> Result<Value> {
     if (r.x0 - ib.x0).abs() < 1e-6 && (r.y0 - ib.y0).abs() < 1e-6 && (r.x1 - ib.x1).abs() < 1e-6 && (r.y1 - ib.y1).abs() < 1e-6 {
         return Err(bad(C, "nothing to crop"));
     }
-    // Keep the image's pixel density.
+    // Keep the image's pixel density, and its pixels: a crop is an edit, not output, so Appearance
+    // of Black's rich black (printing and exporting only) does not apply.
     let scale = (im.width as f64 / ib.width().max(1e-9)).max(im.height as f64 / ib.height().max(1e-9));
     let mut bare = node.clone();
     bare.opacity = 1.0;

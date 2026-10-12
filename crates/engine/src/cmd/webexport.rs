@@ -32,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save for Web",
             [],
             None,
-            "{path?, preset?: a webExport.presets name (its settings, then these keys), format?: gif (default)|jpg|png8|png24, gif/png8: reduction?: perceptual|selective (default)|adaptive|web|blackWhite|gray, colors?: 128 (2–256), dither?: none|diffusion (default)|pattern|noise, ditherAmount?: 100, webSnap?: 0 (0–100 %: colours that close to a web-safe one become it), lossy?: 0 (0–100, gif), colorTable?: {locked?: [\"#rrggbb\"…] (kept when reducing), transparent?: [\"#rrggbb\"…] (become transparent), webShift?: [\"#rrggbb\"…] (become web-safe), sort?: none|hue|luminance|popularity} (colours as the preview's colors[].source), transparency?: true (gif/png8/png24), matte?: white (default)|black|none|\"#rrggbb\" (what edges blend into; jpg and opaque png24: the background), interlaced?: false (gif/png8/png24), jpg: quality?: 60 (0–100), progressive?: false, optimized?: true, embedProfile?: false (sRGB profile), width?: px | height?: px | percent?: 100 (the image size, proportional; width wins over height, height over percent), antiAlias?: none|art (default)|type, clipToArtboard?: true (the artboard; false: the art and the slices), artboard?: 0 (0-based), convertToSrgb?: true (PNG files say they are sRGB), metadata?: none|copyright (default)|contact|all (File Info written as PNG text, a GIF or JPEG comment), slices?: all (default)|selected|none (one image per slice: images/<slice name>.<ext>), output?: images (default)|html (an HTML page placing the image or slices, <stem>.html)} → {path, files: [path…], bytes (total), width, height}; no path → {files: [{name, dataBase64}], bytes, width, height} (names such as page.html, images/page_01.gif). A single image without HTML is written at path itself",
+            "{path?, preset?: a webExport.presets name (its settings, then these keys), format?: gif (default)|jpg|png8|png24, gif/png8: reduction?: perceptual|selective (default)|adaptive|web|blackWhite|gray, colors?: 128 (2–256), dither?: none|diffusion (default)|pattern|noise, ditherAmount?: 100, webSnap?: 0 (0–100 %: colours that close to a web-safe one become it), lossy?: 0 (0–100, gif), colorTable?: {locked?: [\"#rrggbb\"…] (kept when reducing), transparent?: [\"#rrggbb\"…] (become transparent), webShift?: [\"#rrggbb\"…] (become web-safe), sort?: none|hue|luminance|popularity} (colours as the preview's colors[].source), transparency?: true (gif/png8/png24), matte?: white (default)|black|none|\"#rrggbb\" (what edges blend into; jpg and opaque png24: the background), interlaced?: false (gif/png8/png24), jpg: quality?: 60 (0–100), progressive?: false, optimized?: true, embedProfile?: false (sRGB profile), width?: px | height?: px | percent?: 100 (the image size, proportional; width wins over height, height over percent), antiAlias?: none|art (default)|type, clipToArtboard?: true (the artboard; false: the art and the slices), artboard?: 0 (0-based), convertToSrgb?: true (PNG files say they are sRGB), metadata?: none|copyright (default)|contact|all (File Info written as PNG text, a GIF or JPEG comment), slices?: all (default)|selected|none (one image per slice: images/<slice name>.<ext>), output?: images (default)|html (an HTML page placing the image or slices, <stem>.html), richBlack?: Preferences › Appearance of Black › For Printing/Exporting (true: CMYK black ink alone as rich black)} → {path, files: [path…], bytes (total), width, height}; no path → {files: [{name, dataBase64}], bytes, width, height} (names such as page.html, images/page_01.gif). A single image without HTML is written at path itself",
             has_doc,
             export
         ),
@@ -534,6 +534,17 @@ impl Session {
         self.web_settings_over(&WebSettings::default(), p)
     }
 
+    /// Whether a raster export shows black ink alone as rich black: the call's `richBlack` (true
+    /// or false), else Preferences › Appearance of Black › For Printing/Exporting
+    /// (`blackOutput` "rich"; <https://helpx.adobe.com/illustrator/using/setting-preferences.html>).
+    pub fn rich_black_output(&self, p: &Value) -> std::result::Result<bool, String> {
+        let key = "richBlack";
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(self.prefs.black_output == "rich"),
+            Some(v) => v.as_bool().ok_or_else(|| format!("`{key}` must be true or false")),
+        }
+    }
+
     /// What the Save for Web dialog opens on: the remembered settings, else the defaults.
     pub fn last_web_settings(&self) -> WebSettings {
         self.prefs.web_export_settings.clone().unwrap_or_default()
@@ -577,8 +588,9 @@ pub struct WebRender {
 }
 
 /// Draw what `s` exports of `doc` (template layers left out; on white when the document's
-/// background is white).
-pub fn render(doc: &Document, s: &WebSettings) -> std::result::Result<WebRender, String> {
+/// background is white). `rich_black`: Preferences › Appearance of Black › For Printing/Exporting
+/// "as Rich Black" ([`Session::rich_black_output`]).
+pub fn render(doc: &Document, s: &WebSettings, rich_black: bool) -> std::result::Result<WebRender, String> {
     let doc = doc.without_edit_modes();
     let (region, scale) = region(&doc, s)?;
     let page = (doc.setup.background == vectorcraft_doc::Background::White).then_some([255; 4]);
@@ -588,6 +600,7 @@ pub fn render(doc: &Document, s: &WebSettings) -> std::result::Result<WebRender,
         anti_alias: s.anti_alias,
         precise: true,
         supersample: true,
+        rich_black,
         ..Default::default()
     };
     let img = vectorcraft_render::Renderer::new().render_region_with(&doc, region, scale, &opts);
@@ -851,8 +864,14 @@ const IMAGES: &str = "images";
 /// The files of an export of `doc` named after `stem`: one image (`<stem>.<ext>`), or one per
 /// slice (`images/<slice name>.<ext>`), and with HTML output the page (`<stem>.html`, its image in
 /// `images/`). The page comes first. Returns the image size too.
-pub fn export_files(doc: &Document, selected: &[NodeId], s: &WebSettings, stem: &str) -> std::result::Result<(Vec<WebFile>, (u32, u32)), String> {
-    let r = render(doc, s)?;
+pub fn export_files(
+    doc: &Document,
+    selected: &[NodeId],
+    s: &WebSettings,
+    stem: &str,
+    rich_black: bool,
+) -> std::result::Result<(Vec<WebFile>, (u32, u32)), String> {
+    let r = render(doc, s, rich_black)?;
     let areas = doc.slice_layout();
     let cells = cells(&areas, selected, s, &r)?;
     let ext = s.format.ext();
@@ -962,6 +981,7 @@ fn page(doc: &Document, stem: &str, (w, h): (u32, u32), placed: &[(Option<&Cell>
 
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let settings = s.web_settings(p).map_err(|e| bad(C, e))?;
+    let rich_black = s.rich_black_output(p).map_err(|e| bad(C, e))?;
     let st = s.doc()?;
     let selected = super::slices::selected_slices(&st.doc, &st.selection);
     let path = str_param(p, "path").filter(|p| !p.trim().is_empty());
@@ -970,7 +990,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         None => super::fileio::file_stem(&st.doc.title),
     };
     let stem = if stem.trim().is_empty() { "Untitled".to_string() } else { stem };
-    let (files, (width, height)) = export_files(&st.doc, &selected, &settings, &stem).map_err(|e| bad(C, e))?;
+    let (files, (width, height)) = export_files(&st.doc, &selected, &settings, &stem, rich_black).map_err(|e| bad(C, e))?;
     let total: usize = files.iter().map(|f| f.bytes.len()).sum();
     let Some(path) = path else {
         let rows: Vec<Value> = files.iter().map(|f| json!({ "name": f.name, "dataBase64": vectorcraft_format::base64_encode(&f.bytes) })).collect();
@@ -994,13 +1014,14 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
 fn preview(s: &mut Session, p: &Value) -> Result<Value> {
     const P: &str = "document.exportForWeb.preview";
     let settings = s.web_settings(p).map_err(|e| bad(P, e))?;
+    let rich_black = s.rich_black_output(p).map_err(|e| bad(P, e))?;
     let kbps = f64_or(p, "kbps", 56.6);
     if !(kbps.is_finite() && kbps > 0.0) {
         return Err(bad(P, format!("kbps must be a positive number, not {kbps}")));
     }
     let st = s.doc()?;
     let doc = &st.doc;
-    let r = render(doc, &settings).map_err(|e| bad(P, e))?;
+    let r = render(doc, &settings, rich_black).map_err(|e| bad(P, e))?;
     let areas = doc.slice_layout();
     let selected = super::slices::selected_slices(doc, &st.selection);
     let cells = cells(&areas, &selected, &settings, &r).map_err(|e| bad(P, e))?;

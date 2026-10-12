@@ -119,6 +119,11 @@ pub struct RenderOptions {
     /// edge leave no seam of the background between them (#983). Off, edges are smoothed shape by
     /// shape (the canvas).
     pub supersample: bool,
+    /// Preferences › Appearance of Black "as Rich Black": black ink alone (CMYK with no cyan,
+    /// magenta or yellow) draws as jet black, the grey of its tint, so it looks like a rich black;
+    /// off ("Accurately"), it shows through the CMYK profile as the dark grey it prints as. The
+    /// canvas follows On Screen, RGB and greyscale exports Printing / Exporting.
+    pub rich_black: bool,
 }
 
 /// The opacity of the art around an isolated group or layer.
@@ -192,6 +197,7 @@ impl Default for RenderOptions {
             isolated: None,
             precise: false,
             supersample: false,
+            rich_black: false,
         }
     }
 }
@@ -540,7 +546,7 @@ impl Renderer {
         let inv = view.inverse();
         let visible = inv.transform_rect_bbox(Rect::new(0.0, 0.0, w as f64, h as f64));
         let px = 1.0 / view.determinant().abs().sqrt().max(1e-12);
-        let frame = Frame { mt: threads > 0, doc, view, visible, px, opts, ink: Ink::Display };
+        let frame = Frame { mt: threads > 0, doc, view, visible, px, opts, ink: Ink::display(opts.rich_black) };
         self.stamp += 1;
         // View Opacity Mask: the mask's coverage in greyscale instead of the artwork.
         if let Some(m) = opts.mask_view.and_then(|id| doc.node(id)).and_then(|n| n.mask.as_deref()) {
@@ -554,7 +560,7 @@ impl Renderer {
             let stats = self.stats;
             let k = self.draw_frame(&Frame { ink: Ink::K, ..frame }, w, h);
             self.stats = stats;
-            if inks { ink::amounts(&cmy, &k) } else { ink::compose(&cmy, &k, opts.background) }
+            if inks { ink::amounts(&cmy, &k) } else { ink::compose(&cmy, &k, opts.background, opts.rich_black) }
         } else {
             self.draw_frame(&frame, w, h)
         };

@@ -175,6 +175,9 @@ struct RasterOptions {
     layers: Option<bool>,
     max_editability: Option<bool>,
     hidden_layers: Option<bool>,
+    /// Appearance of Black › Printing / Exporting: black ink alone as jet black in RGB and
+    /// greyscale files (`document.export` fills it in from the `blackOutput` preference).
+    rich_black: Option<bool>,
 }
 
 impl RasterOptions {
@@ -239,6 +242,7 @@ impl RasterOptions {
                 hidden_layers: self.hidden_layers.unwrap_or(false),
                 embed_icc,
             },
+            rich_black: self.rich_black.unwrap_or(false),
         })
     }
 }

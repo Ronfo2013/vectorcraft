@@ -263,6 +263,8 @@ fn mean_scale(a: Affine) -> f64 {
 impl Renderer {
     /// Draw placed document `p` in frame `f`: from a cached bitmap on screen, else exactly.
     pub(crate) fn draw_placed(&mut self, ctx: &mut RenderContext, f: &Frame, p: &PlacedDocument) {
+        // The cached bitmaps hold screen colours without Appearance of Black's rich black, so a
+        // rich-black frame (`Ink::RichBlack`) draws the placed art exactly.
         let plain = f.ink == Ink::Display && !f.opts.outline && f.opts.proof.is_none() && !f.opts.overprint_preview;
         if f.opts.progressive_placed && plain && depth() == 0 && self.draw_placed_bitmap(ctx, f, p) {
             return;

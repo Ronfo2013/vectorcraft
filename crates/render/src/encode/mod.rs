@@ -60,6 +60,9 @@ pub struct RasterExportOptions {
     pub tga: tga::TgaOptions,
     /// PSD colour model, layers and profile.
     pub psd: psd::PsdOptions,
+    /// Appearance of Black › Printing / Exporting "as Rich Black": black ink alone exports as jet
+    /// black in RGB and greyscale files ([`RenderOptions::rich_black`]); CMYK files keep their inks.
+    pub rich_black: bool,
 }
 
 impl Default for RasterExportOptions {
@@ -76,6 +79,7 @@ impl Default for RasterExportOptions {
             bmp: bmp::BmpOptions::default(),
             tga: tga::TgaOptions::default(),
             psd: psd::PsdOptions::default(),
+            rich_black: false,
         }
     }
 }
@@ -99,6 +103,7 @@ impl RasterExportOptions {
             precise: true,
             // Shapes meeting edge to edge leave no seam (#983).
             supersample: true,
+            rich_black: self.rich_black,
             ..Default::default()
         }
     }

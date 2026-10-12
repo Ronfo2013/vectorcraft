@@ -12,7 +12,12 @@ pub fn open_tool_dialog(app: &mut VectorcraftApp, kind: &str, p: Value) {
     let y = p.get("y").and_then(Value::as_f64).unwrap_or(0.0);
     let d = match kind {
         "rectangle" | "ellipse" => Dialog::new(kind, json!({"x": x, "y": y, "width": "100 pt", "height": "100 pt"})),
-        "roundedRectangle" => Dialog::new(kind, json!({"x": x, "y": y, "width": "100 pt", "height": "100 pt", "radius": "12 pt"})),
+        // Its Corner Radius starts at General › Corner Radius.
+        "roundedRectangle" => {
+            // Rounded as the dialog's other fields step (no 12.300000001 pt).
+            let radius = format!("{} pt", crate::widgets::round_to(app.session.prefs.corner_radius, 3));
+            Dialog::new(kind, json!({"x": x, "y": y, "width": "100 pt", "height": "100 pt", "radius": radius}))
+        }
         "polygon" => Dialog::new(kind, json!({"x": x, "y": y, "radius": "50 pt", "sides": 6})),
         "star" => Dialog::new(kind, json!({"x": x, "y": y, "radius1": "50 pt", "radius2": "25 pt", "points": 5})),
         "lineSegment" => Dialog::new(kind, json!({"x": x, "y": y, "length": "100 pt", "angle": 0})),

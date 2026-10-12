@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (G11: PDF text opens where the file draws it, #722: kerning or none as the file set it, word and character spacing and TJ adjustments kept per character, text rise as baseline shift, narrow vertical glyphs centred on their column, justified text boxes back as area type; G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (G12: Constrain Angle, Corner Radius, Appearance of Black and Real-time Drawing and Editing act (#394, first batch); G11: PDF text opens where the file draws it, #722: kerning or none as the file set it, word and character spacing and TJ adjustments kept per character, text rise as baseline shift, narrow vertical glyphs centred on their column, justified text boxes back as area type; G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every known shortfall against Illustrator, one entry each, **ranked by how much it stops a professional from
 switching**. This is the work list: unless you were given a task, pick the highest-ranked gap you can make
@@ -21,7 +21,7 @@ stage ([ROADMAP.md](../ROADMAP.md)).
 | 4 | [G8 Hardening at scale](#g8-hardening-at-scale) | 30–50 | yes (part) | — |
 | 5 | [G11 Correctness bugs in core tools](#g11-correctness-bugs-in-core-tools) | 8–15 | yes | [target-app-parity.md](target-app-parity.md) |
 | 6 | [G4 Advanced type](#g4-advanced-type) | 34–47 | core part | [type-parity.md](type-parity.md) |
-| 7 | [G12 Preferences and panels that don't act yet](#g12-preferences-and-panels-that-dont-act-yet) | 13–20 | yes | [ui-parity.md](ui-parity.md) |
+| 7 | [G12 Preferences and panels that don't act yet](#g12-preferences-and-panels-that-dont-act-yet) | 11–17 | yes | [ui-parity.md](ui-parity.md) |
 | 8 | [G2 Photoshop-style raster effects and the Effect Gallery](#g2-photoshop-style-raster-effects-and-the-effect-gallery) | 24–40 | no | [effects-parity.md](effects-parity.md) |
 | 9 | [G13 Illustrator 2026 (30.x) additions](#g13-illustrator-2026-30x-additions) | 15–25 | no | [target-app-parity.md](target-app-parity.md) |
 | 10 | [G14 Pen hardware beyond Windows pressure](#g14-pen-hardware-beyond-windows-pressure) | 8–16 | macOS pressure | [hardware-parity.md](hardware-parity.md) |
@@ -158,11 +158,21 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 ## G12 Preferences and panels that don't act yet
 
-- **Missing:** ~17 Preferences options stored but not acted on (#394: Highlight Alternate Glyphs, Open
-  Documents As Tabs, Real-time Drawing, hyphenation language, Appearance of Black, devices…), Properties panel per
-  context, context menus beyond the canvas, Layers panel row menus and Collect for Export, SVG Interactivity.
+- **Missing:** ~12 Preferences options stored but not acted on (#394: Highlight Alternate Glyphs, Identify
+  Objects By, East Asian Type units, Open Documents As Tabs, GPU Performance beyond Animated Zoom and Real-time
+  Drawing, hyphenation Default Language, Use Low Resolution Proxy for Linked EPS, the two scratch disks, the two
+  legacy clipboard options, Touch Workspace), Constrain Angle for type, grids, polygons, stars and shapes made by a
+  click, Properties panel per context, context menus beyond the canvas, Layers panel row menus and Collect for
+  Export, SVG Interactivity.
+- **Done (2026-10-12, #394 first batch):** General › Constrain Angle turns the arrow keys' axes, holds every Shift
+  drag (Selection, Direct Selection, Free Transform, slices, Reshape, Knife, Measure, Pen handles) to the turned
+  axes and draws rectangles, rounded rectangles and ellipses along them; General › Corner Radius is the Rounded
+  Rectangle tool's and dialog's radius (↑/↓ while drawing set it); Appearance of Black › On Screen and Printing /
+  Exporting (black ink alone as jet black on the canvas, in raster exports, Export for Screens and Save for Web); Performance ›
+  Real-time Drawing and Editing (off, or GPU Performance off: during a drag on the canvas the art redraws at the
+  release while the outlines follow the drag; dialog and panel previews still draw live).
 - **Impact:** settings that silently do nothing erode trust.
-- **Estimate:** 13–20 h.
+- **Estimate:** 11–17 h.
 
 ## G2 Photoshop-style raster effects and the Effect Gallery
 
@@ -256,6 +266,8 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | G12: #394 first batch review fixes: Save for Web follows Appearance of Black, Real-time Drawing off holds only canvas drags, exact whole and quarter turns of Constrain Angle, pattern fills in transparent CMYK documents no longer crash |
+| 2026-10-12 | minor | G12: #394 first batch: Constrain Angle (arrow keys, Shift drags, drawn boxes), Corner Radius (Rounded Rectangle tool and dialog), Appearance of Black (canvas and raster exports), Real-time Drawing and Editing; ~12 options left; estimate 13–20 h → 11–17 h |
 | 2026-10-12 | minor | G11: #722 fixed (PDF text slid on open where the file spaced its glyphs other than the font's metrics: kerning, word and character spacing, `TJ` adjustments, text rise, narrow vertical glyphs; justified text boxes stayed lines); estimate unchanged, #937 open |
 | 2026-10-11 | minor | G11: #834 fixed (a tool drag's preview skipped the pointer position in the frame it came back into the window, and the move in the release's frame, so a handle or anchor stayed behind until the next move and the release committed the stale shape); estimate unchanged |
 | 2026-10-11 | minor | G11: #864 fixed (SVG saves wrote unitless sizes, so a document in mm/in/pt reopened in pixels); estimate unchanged |

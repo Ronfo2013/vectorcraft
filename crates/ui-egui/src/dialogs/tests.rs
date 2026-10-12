@@ -653,3 +653,14 @@ fn resting_checkbox_outlines_contrast_with_the_panel() {
         assert!(contrast >= 3.0, "{brightness:?}: outline {outline:?} on panel {panel:?} is {contrast:.2}:1");
     }
 }
+
+/// The Rounded Rectangle dialog's Corner Radius starts at General › Corner Radius, rounded as the
+/// other fields are (no float noise such as 12.30000000001 pt).
+#[test]
+fn rounded_rectangle_dialog_starts_at_the_corner_radius_preference() {
+    let mut app = app();
+    app.session.prefs.corner_radius = 12.300_000_000_01;
+    open_tool_dialog(&mut app, "roundedRectangle", json!({"x": 5, "y": 5}));
+    let d = app.ui.dialog.as_ref().unwrap();
+    assert_eq!(d.fields["radius"], json!("12.3 pt"));
+}

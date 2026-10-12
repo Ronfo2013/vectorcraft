@@ -340,7 +340,7 @@ impl Tool for SelectionTool {
                     out.push(Action::Begin(if m.alt { "Copy".into() } else { "Move".into() }));
                     self.moving = Some(MoveSnap::new(cx));
                 }
-                let mut d = move_delta(start, p, m.shift);
+                let mut d = move_delta(start, p, m.shift, cx.constrain_angle);
                 if let Some(snap) = &self.moving {
                     (d, self.guides) = snap.snap(cx, start, d, m.alt);
                 }
