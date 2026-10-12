@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (SVG keeps the document's units through save and open, #864; earlier: EPS page and stacked text strokes through the layers, #1102) · **Target:** Adobe Illustrator 2026 (30.x; G9: a 2026 `.ai` opens from its editing data — unknown operators skipped, unread object kinds left out with a loss note, every artboard compared with its page; layer structure under property tests; repeated per-page PDF layers merged; private data that can't be read is said, #951, #868, #779, #758) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (G9: gradient meshes read from `.ai` editing data, the user's Illustrator 30.8 file opens whole; SVG keeps the document's units through save and open, #864; earlier: EPS page and stacked text strokes through the layers, #1102) · **Target:** Adobe Illustrator 2026 (30.x; G9: a 2026 `.ai` opens from its editing data — unknown operators skipped, unread object kinds left out with a loss note, every artboard compared with its page; layer structure under property tests; repeated per-page PDF layers merged; private data that can't be read is said, #951, #868, #779, #758) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every format Illustrator opens, places, saves or exports, against VectorCraft's format table (`FORMATS`,
 `OPEN_EXTS`, `PLACE_EXTS` in `crates/engine/src/cmd/fileio/mod.rs`). Illustrator's list comes from its public
@@ -57,10 +57,24 @@ private editing data. VectorCraft:
   containers still stop it), and an object of a kind it doesn't read (`/Kind X!` … `/End X!`) is left out and
   counted in a **loss** note, so Save never writes over the original. The file then opens from its editing
   data in 5 s: its 4 artboards by name, 198 groups, 199 compound paths, 767 paths, 47 type objects and 7
-  images on its one layer, 3 meshes left out (they are on the second artboard; the render of the first is
-  the same as through the PDF part). To catch such a loss anywhere, every artboard of a `.ai` is now
-  compared with its page (up to 32 after the first), not only the first. Reading gradient meshes from the
-  editing data is the next G9 item. Guides and non-printing construction lines (#779) are read from the
+  images on its one layer, and (since the same day) its 3 gradient meshes as 168 mesh patches: `/Mesh X!` …
+  `/End X!` objects are read (`crates/eps/src/import/ai/mesh.rs`: `/Size`, `/CS` in DeviceRGB, DeviceGray or
+  DeviceCMYK, RGB until one is given, per patch four `/N` corners with colour, point and two handles, `/S`
+  edge points between them, the last edge's points listed first in reverse; a patch without edge points is
+  one Coons patch, with them a grid of Coons patches whose boundary is the file's own cubics, split exactly
+  where the grid's lines meet them, and whose inner lines follow the Coons surface of that boundary). The
+  structure was established by matching every corner, handle and colour against the PDF part's
+  tensor-product patch shadings of the same meshes (ISO 32000-1 §8.7.4.5.8): positions equal to the last
+  digit, colours equal. The value after each corner's colour was 1 on all 672 corners of that file, whose
+  PDF part paints the meshes opaque, so what else it means isn't known: a corner where it isn't 1 is read
+  opaque, with a loss note. Patches that can't be read are counted in the loss note as "Mesh patch", with
+  the reason where there is one (a colour space it doesn't read is named: "Mesh patch (DeviceN colour)");
+  a patch is at most a 4096-point grid and a file at most 2²⁰ mesh points (each mesh object counts against
+  the reader's object limit too): past them, patches are left out with "(over the size limit)" rather than
+  the file failing. Nothing is left out of that file any more; its second artboard renders the same through
+  the editing data as through the PDF part (1.2 % of pixels differ by more than 48/255, the fallback-font
+  text; over the meshes' area 0.4 %). To catch any loss anywhere, every artboard of a `.ai` is compared with its
+  page (up to 32 after the first), not only the first. Guides and non-printing construction lines (#779) are read from the
   editing data (ruler and path guides as `(N) *`, the layer's print flag); they are lost whenever the file
   falls back to its PDF part, which has none. Open speed (#758): the reader has no step growing with the
   square of the file (50 000 objects in nested layers read and import in 0.6 s in the optimized test profile, structure test
@@ -109,6 +123,8 @@ the app's own editing copy of a file (an EPS after its `%%EOF`, a `.ai`'s `AIPri
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | SVG saves and exports write the root size in the document's units, so a document in mm/cm/in/pc/pt reopens in its units at the same artboard size (#864; it came back in pixels, reported as points) |
+| 2026-10-12 | minor | G9 mesh reading hardened: the file's own boundary cubics for split patches, RGB by default and other colour spaces named, a loss note for a corner value other than 1, capped grids and mesh points, a mesh outside the layers left out rather than failing the file |
+| 2026-10-12 | minor | G9: gradient meshes read from `.ai` editing data (`/Mesh X!` objects as Coons patches), structure matched against the PDF part's patch shadings of the user's file, which now opens whole |
 | 2026-10-11 | minor | G9 on a real Illustrator 30.8 file: unknown operators skipped (not aborting), unread object kinds (gradient meshes) left out with a loss note, every artboard compared with its page; the file opens from its editing data |
 | 2026-10-11 | minor | G9 audit: layer/group/guide structure of the editing data under property tests; PDF layers repeated per page merged; unreadable private data named in the notes (#951, #868, #779, #758) |
 | 2026-10-11 | minor | An EPS keeps its own page and its stacked text strokes through its layers (#1102) |

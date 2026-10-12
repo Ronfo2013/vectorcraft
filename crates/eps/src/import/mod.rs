@@ -65,6 +65,7 @@ use graphics::{GState, Out};
 use interp::{Fault, Interp};
 use obj::PsError;
 
+pub use ai::MAX_MESH_POINTS;
 pub use native::{LAYERS_UNREAD, NO_LAYERS_NOTE, ai_alone, is_loss, layered_ai, layers_unread_note};
 pub use text::family_style;
 

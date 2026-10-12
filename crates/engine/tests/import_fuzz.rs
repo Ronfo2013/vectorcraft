@@ -2235,3 +2235,79 @@ proptest! {
         search_reads("mutated font file", &bytes)?;
     }
 }
+
+// ---------- gradient meshes in `.ai` editing data ----------
+
+/// A number in a mesh entry: ordinary, huge, or not a number at all (`nan`, `inf` and `1e999` read
+/// as words, which end the array they are in).
+fn arb_mesh_num() -> impl Strategy<Value = String> {
+    prop_oneof![
+        4 => (-500.0f64..500.0).prop_map(|v| format!("{v:.3}")),
+        1 => prop::sample::select(vec!["1e308", "-1e308", "nan", "inf", "-inf", "1e999", "0", "1", "1e-300"]).prop_map(str::to_string),
+    ]
+}
+
+/// One `X#` entry of a mesh object (or a run of them), as the editing data writes them.
+fn arb_mesh_entry() -> impl Strategy<Value = String> {
+    prop_oneof![
+        (0u64..10_000_000, 0u64..10_000_000).prop_map(|(c, r)| format!("[{c} {r}] /Size X#")),
+        prop::sample::select(vec![
+            "/DeviceRGB",
+            "/DeviceGray",
+            "/DeviceCMYK",
+            "/DeviceN",
+            "/Lab",
+            "/Indexed",
+            "[/Separation (Ink) /DeviceCMYK {}]",
+            "()"
+        ])
+        .prop_map(|cs| format!("{cs} /CS X#")),
+        (0u32..9, 0u32..9).prop_map(|(c, r)| format!("[{c} {r}] /P X#")),
+        prop::collection::vec(arb_mesh_num(), 0..15).prop_map(|v| format!("[{}] /N X#", v.join(" "))),
+        prop::collection::vec(arb_mesh_num(), 0..9).prop_map(|v| format!("[{}] /S X#", v.join(" "))),
+        Just("/E X#".to_string()),
+        // A corner that reads, anywhere.
+        (0.0f64..200.0, 0.0f64..100.0).prop_map(|(x, y)| format!("[0.5 0.5 0.5 1 {x:.2} {y:.2} {x:.2} {y:.2} 1 {x:.2} {y:.2} 1] /N X#")),
+        // Many edge points in a row (grids past the size limit).
+        (1usize..300).prop_map(|n| (0..n).map(|i| format!("[{i} 0 {i} 0 {i} 0 1] /S X#")).collect::<Vec<_>>().join("\n%_")),
+        // Bare arrays and other keys.
+        Just("[1 2 3 4 5 6 1]".to_string()),
+        Just("2 /Version X#".to_string()),
+    ]
+}
+
+/// The mesh points of `doc`, all meshes together.
+fn mesh_points(nodes: &[std::sync::Arc<vectorcraft_doc::Node>]) -> usize {
+    nodes
+        .iter()
+        .map(|n| match &n.kind {
+            vectorcraft_doc::NodeKind::Mesh(m) => m.points.len(),
+            _ => n.children().map_or(0, |c| mesh_points(c)),
+        })
+        .sum()
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    /// Mesh objects of random entries (huge grids, numbers that aren't finite, any number of
+    /// corners, long runs of edge points, colour spaces it doesn't read) in a `.ai`'s editing data:
+    /// read, or left out, never a panic, and never more mesh points than the file's cap.
+    #[test]
+    fn ai_mesh_objects_never_panic_and_stay_capped(meshes in prop::collection::vec(prop::collection::vec(arb_mesh_entry(), 0..40), 1..4)) {
+        use vectorcraft_testkit::ai;
+        let objects: String = meshes.iter().map(|entries| format!("/Mesh X!\n%_{}\n/End X!\n0 0 Xd\n6 (Mesh) XW\n", entries.join("\n%_"))).collect();
+        let data = ai::editing_data(200.0, 100.0, &ai::layer("Art", &objects));
+        let file = ai::ai(data.as_bytes(), ai::page_pdf());
+        let mut points = None;
+        survive("mesh objects in a .ai", || {
+            let doc = vectorcraft_engine::cmd::fileio::load("x.ai", &file).ok().map(|l| l.doc)?;
+            points = Some(mesh_points(&doc.layers));
+            Some(doc)
+        })?;
+        survive("mesh objects in editing data alone", || vectorcraft_eps::ai_alone(data.as_bytes()).ok().map(|(d, _)| d))?;
+        if let Some(n) = points {
+            prop_assert!(n <= vectorcraft_eps::MAX_MESH_POINTS, "{n} mesh points");
+        }
+    }
+}

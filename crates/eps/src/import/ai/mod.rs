@@ -18,6 +18,7 @@
 //! did before (the printed page, or the PDF), with a warning saying why.
 
 mod lex;
+mod mesh;
 mod obj;
 mod paint;
 mod read;
@@ -27,11 +28,14 @@ use std::io::Read as _;
 use super::lex::find;
 use crate::ps;
 
-pub use read::{OBJECTS_LEFT_OUT, OPERATORS_SKIPPED, OPERATORS_SKIPPED_UNCHECKED, Structure, artboards, read};
+pub use mesh::MAX_MESH_POINTS;
+pub use read::{MESH_OPACITY_UNREAD, OBJECTS_LEFT_OUT, OPERATORS_SKIPPED, OPERATORS_SKIPPED_UNCHECKED, Structure, artboards, read};
 pub(crate) use read::{slot_frame, slot_of};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_mesh;
 #[cfg(test)]
 mod tests_structure;
 
