@@ -261,6 +261,10 @@ pub struct CanvasCache {
     pub last_ms: f64,
     pub worker: Option<render_worker::Worker>,
     pub worker_started: bool,
+    /// A pointer gesture on the canvas is in progress: a tool had its mouse-down and not yet its
+    /// mouse-up ([`canvas::dispatch`]). Real-time Drawing and Editing off holds the art still only
+    /// then, not during other interactions (dialog, panel and colour picker previews).
+    pub tool_gesture: bool,
     /// The slices as laid out for (document uid, revision): the canvas draws them every frame.
     pub slices: Option<SliceCache>,
     /// The print tiling's pages for (document uid, revision) (View → Show Print Tiling).
@@ -446,6 +450,7 @@ impl VectorcraftApp {
                 last_ms: 0.0,
                 worker: None,
                 worker_started: false,
+                tool_gesture: false,
                 slices: None,
                 print_tiling: None,
                 selection_box: None,

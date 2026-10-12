@@ -154,9 +154,9 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
   drag (Selection, Direct Selection, Free Transform, slices, Reshape, Knife, Measure, Pen handles) to the turned
   axes and draws rectangles, rounded rectangles and ellipses along them; General › Corner Radius is the Rounded
   Rectangle tool's and dialog's radius (↑/↓ while drawing set it); Appearance of Black › On Screen and Printing /
-  Exporting (black ink alone as jet black on the canvas, in raster exports and Export for Screens); Performance ›
-  Real-time Drawing and Editing (off, or GPU Performance off: the art redraws at the release while the outlines
-  follow the drag).
+  Exporting (black ink alone as jet black on the canvas, in raster exports, Export for Screens and Save for Web); Performance ›
+  Real-time Drawing and Editing (off, or GPU Performance off: during a drag on the canvas the art redraws at the
+  release while the outlines follow the drag; dialog and panel previews still draw live).
 - **Impact:** settings that silently do nothing erode trust.
 - **Estimate:** 11–17 h.
 
@@ -252,6 +252,7 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | G12: #394 first batch review fixes: Save for Web follows Appearance of Black, Real-time Drawing off holds only canvas drags, exact whole and quarter turns of Constrain Angle, pattern fills in transparent CMYK documents no longer crash |
 | 2026-10-12 | minor | G12: #394 first batch: Constrain Angle (arrow keys, Shift drags, drawn boxes), Corner Radius (Rounded Rectangle tool and dialog), Appearance of Black (canvas and raster exports), Real-time Drawing and Editing; ~12 options left; estimate 13–20 h → 11–17 h |
 | 2026-10-11 | minor | G11: #834 fixed (a tool drag's preview skipped the pointer position in the frame it came back into the window, and the move in the release's frame, so a handle or anchor stayed behind until the next move and the release committed the stale shape); estimate unchanged |
 | 2026-10-11 | minor | G11: #864 fixed (SVG saves wrote unitless sizes, so a document in mm/in/pt reopened in pixels); estimate unchanged |

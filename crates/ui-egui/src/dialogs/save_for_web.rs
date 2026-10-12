@@ -231,8 +231,10 @@ fn previews(app: &VectorcraftApp, ctx: &egui::Context, s: &WebSettings, panes: &
     let Some(st) = app.session.active() else { return (Err("no document".into()), vec![]) };
     let doc = &st.doc;
     let mut cache: Cache = ctx.data(|m| m.get_temp(cache_id())).unwrap_or_default();
+    // Preferences › Appearance of Black › For Printing/Exporting.
+    let rich_black = app.session.prefs.black_output == "rich";
     let render_key = format!(
-        "{}:{}:{:?}:{:?}:{:?}:{}:{}:{:?}:{:?}",
+        "{}:{}:{:?}:{:?}:{:?}:{}:{}:{:?}:{:?}:{}",
         st.uid,
         st.revision,
         s.width,
@@ -241,10 +243,11 @@ fn previews(app: &VectorcraftApp, ctx: &egui::Context, s: &WebSettings, panes: &
         s.anti_alias.id(),
         s.clip_to_artboard,
         s.artboard,
-        (!s.clip_to_artboard).then_some(s.slices)
+        (!s.clip_to_artboard).then_some(s.slices),
+        rich_black
     );
     if cache.render_key != render_key || cache.render.is_none() {
-        let r = webexport::render(doc, s).map(Arc::new);
+        let r = webexport::render(doc, s, rich_black).map(Arc::new);
         cache.original = r.as_ref().ok().map(|r| Shot {
             texture: texture(ctx, "save-for-web-original", &r.rgba, [r.width, r.height]),
             size: [r.width, r.height],

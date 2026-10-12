@@ -240,11 +240,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     // File Handling › Display Bitmaps as Anti-aliased Images in Pixel Preview: off, images show
     // their pixels as they rasterize, hard-edged.
     let smooth_images = pixel.is_none() || app.session.prefs.anti_aliased_bitmaps;
-    // Performance › Real-time Drawing and Editing off: while a tool drags, the art stays drawn as
-    // it was when the drag began and only the outlines of what is edited follow the pointer; the
-    // art is drawn again at the release.
+    // Performance › Real-time Drawing and Editing off: while a tool drags on the canvas, the art
+    // stays drawn as it was when the drag began and only the outlines of what is edited follow
+    // the pointer; the art is drawn again at the release. Dialog, panel and colour picker
+    // previews (interactions too) still draw as they change.
+    let frozen = app.canvas.tool_gesture && app.session.in_interaction() && !real_time_drawing(&app.session.prefs);
     let revision = match &app.canvas.key {
-        Some(k) if k.doc == st.uid as usize && !real_time_drawing(&app.session.prefs) && app.session.in_interaction() => k.revision,
+        Some(k) if k.doc == st.uid as usize && frozen => k.revision,
         _ => st.revision,
     };
     let key = CacheKey {
@@ -936,6 +938,13 @@ fn drag_art_out(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, p: Pos
 
 /// Send a pointer event to the active tool and act on UI requests (dialogs, tool switches).
 pub fn dispatch(app: &mut VectorcraftApp, ev: &PointerEvent, view: vectorcraft_engine::ViewInfo) {
+    match ev.kind {
+        PointerKind::Down => app.canvas.tool_gesture = true,
+        // Every end of a gesture (release, cancel by touch or by dragging art out) sends the
+        // tool its mouse-up.
+        PointerKind::Up => app.canvas.tool_gesture = false,
+        _ => {}
+    }
     let r = app.session.pointer(ev, view);
     // The artboard the Artboard tool makes active is the active one (the navigator's, the
     // Artboards panel's).
@@ -3957,5 +3966,29 @@ mod tests {
         let before = revisions(&app).0;
         let ((shown, now), _) = drag(&mut app);
         assert!(shown == before && now != before, "GPU Performance off: as off");
+    }
+
+    /// Real-time Drawing and Editing off holds the art still only during a pointer gesture on the
+    /// canvas: a dialog's (or panel's, or the colour picker's) live preview, also an interaction,
+    /// is drawn as it changes.
+    #[test]
+    fn real_time_drawing_off_still_draws_dialog_previews() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+        app.session.execute("shape.rectangle", &json!({"x": 100, "y": 50, "width": 100, "height": 100})).unwrap();
+        app.run("prefs.set", json!({"key": "realTimeDrawing", "value": false})).unwrap();
+        app.canvas.worker_started = true; // render on this thread
+        let ctx = egui::Context::default();
+        frame(&mut app, &ctx, vec![]);
+        let before = app.canvas.key.as_ref().unwrap().revision;
+        // What a dialog's Preview does (`dialogs::form::preview`).
+        app.session.begin_interaction("Move").unwrap();
+        app.session.preview("object.move", &json!({"dx": 20, "dy": 0})).unwrap();
+        assert!(app.session.in_interaction());
+        frame(&mut app, &ctx, vec![]);
+        let (shown, now) = (app.canvas.key.as_ref().unwrap().revision, app.session.active().unwrap().revision);
+        assert!(now != before && shown == now, "the preview is drawn: {before} → {shown}, document {now}");
+        app.session.cancel_interaction().unwrap();
+        assert!(!app.canvas.tool_gesture);
     }
 }

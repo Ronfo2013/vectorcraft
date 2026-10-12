@@ -310,10 +310,9 @@ fn move_cmd(s: &mut Session, p: &Value) -> Result<Value> {
 /// to nudge along a view rotated by 90°:
 /// <https://community.adobe.com/t5/illustrator-discussions/arrow-keys-and-ruler-guides-not-adjusted-when-using-rotate-view/m-p/12489564>).
 pub(crate) fn along_constrain_angle(dx: f64, dy: f64, deg: f64) -> (f64, f64) {
-    if deg == 0.0 || !deg.is_finite() {
-        return (dx, dy);
-    }
-    let v = Affine::rotate(-deg.to_radians()) * Point::new(dx, dy);
+    // Whole turns are the page's axes, exactly; quarter turns are exact too.
+    let Some(axes) = vectorcraft_geom::constrain_axes(deg) else { return (dx, dy) };
+    let v = axes * Point::new(dx, dy);
     (v.x, v.y)
 }
 

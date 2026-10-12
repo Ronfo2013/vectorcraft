@@ -165,7 +165,7 @@ fn jpeg_size_grows_with_quality() {
     // `image` crate misreads some optimised Huffman tables).
     let st = cmd::webexport::WebSettings { format: cmd::webexport::WebFormat::Jpg, quality: 90, matte: "#ffff00".into(), ..Default::default() };
     let doc = &t.doc().unwrap().doc;
-    let r = cmd::webexport::render(doc, &st).unwrap();
+    let r = cmd::webexport::render(doc, &st, false).unwrap();
     let o = cmd::webexport::preview_image(doc, &r.rgba, r.width, r.height, &st).unwrap();
     assert_eq!(o.bytes, cmd::webexport::optimize(doc, &r.rgba, r.width, r.height, &st).unwrap().bytes, "the file is the one Save writes");
     let (px, w, h) = cmd::webexport::decode(&o).unwrap();

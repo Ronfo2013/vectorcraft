@@ -188,3 +188,75 @@ fn black_output_exports_pure_black_as_rich_black() {
     assert_eq!(rich_rich, rich_accurate, "a rich black is drawn as it was");
     assert_eq!(pixels(&mut s, json!({"richBlack": false})).0, k_accurate, "the export's own choice wins");
 }
+
+/// General › Constrain Angle of a whole turn (±360°) is no turn: the arrow keys move along
+/// the page exactly as at 0°, with no floating-point noise.
+#[test]
+fn constrain_angle_whole_turns_nudge_as_zero() {
+    let mut s = new_doc();
+    let id = rect(&mut s, 100.0, 100.0);
+    set_pref(&mut s, "keyboardIncrement", json!(10));
+    let moved = |s: &mut Session, dx: i32, dy: i32| {
+        let at = centre(s, id);
+        s.execute("object.nudge", &json!({"dx": dx, "dy": dy})).unwrap();
+        centre(s, id) - at
+    };
+    let flat = [moved(&mut s, 1, 0), moved(&mut s, 0, 1)];
+    // The preference takes −360…360.
+    for turn in [360, -360] {
+        set_pref(&mut s, "constrainAngle", json!(turn));
+        assert_eq!([moved(&mut s, 1, 0), moved(&mut s, 0, 1)], flat, "{turn}°");
+    }
+    // A quarter turn is exact too: → moves straight up.
+    set_pref(&mut s, "constrainAngle", json!(90));
+    assert_eq!(moved(&mut s, 1, 0), Vec2::new(0.0, -10.0));
+}
+
+/// A CMYK document with a 100% K square and a C60 M40 Y40 K100 one beside it.
+fn black_doc() -> Session {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 40, "height": 20, "colorMode": "cmyk"})).unwrap();
+    for (x, c) in [(0, json!({"c": 0, "m": 0, "y": 0, "k": 100})), (20, json!({"c": 60, "m": 40, "y": 40, "k": 100}))] {
+        let id = s.execute("shape.rectangle", &json!({"x": x, "y": 0, "width": 20, "height": 20})).unwrap()["id"].clone();
+        s.execute("paint.setFill", &json!({"color": c, "ids": [id]})).unwrap();
+        s.execute("paint.setStroke", &json!({"none": true, "ids": [id]})).unwrap();
+    }
+    s
+}
+
+/// Appearance of Black › Printing / Exporting reaches Save for Web too: its PNG shows black ink
+/// alone as jet black when "as Rich Black", the call's `richBlack` winning.
+#[test]
+fn black_output_reaches_save_for_web() {
+    let mut s = black_doc();
+    let k_pixel = |s: &mut Session, extra: Value| {
+        let mut p = json!({"format": "png24", "transparency": false});
+        if let (Some(p), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+            p.extend(e.clone());
+        }
+        let r = s.execute("document.exportForWeb", &p).unwrap();
+        let png = vectorcraft_format::base64_decode(r["files"][0]["dataBase64"].as_str().unwrap()).unwrap();
+        image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(10, 10).0
+    };
+    let accurate = k_pixel(&mut s, json!({}));
+    assert!(accurate[0] > 20, "accurately: a dark grey, {accurate:?}");
+    set_pref(&mut s, "blackOutput", json!("rich"));
+    assert_eq!(k_pixel(&mut s, json!({})), [0, 0, 0, 255], "as rich black");
+    assert_eq!(k_pixel(&mut s, json!({"richBlack": false})), accurate, "the call's own choice wins");
+    assert!(s.execute("document.exportForWeb", &json!({"format": "png24", "richBlack": "yes"})).is_err());
+}
+
+/// Appearance of Black changes how black ink is shown in RGB pixels only: SVG and PDF exports
+/// keep the document's colours, byte for byte, whatever the preference.
+#[test]
+fn black_output_leaves_svg_and_pdf_exports_alone() {
+    let mut s = black_doc();
+    let export = |s: &mut Session, format: &str| {
+        let r = s.execute("document.export", &json!({"format": format})).unwrap();
+        vectorcraft_format::base64_decode(r["dataBase64"].as_str().unwrap()).unwrap()
+    };
+    let (svg, pdf) = (export(&mut s, "svg"), export(&mut s, "pdf"));
+    set_pref(&mut s, "blackOutput", json!("rich"));
+    assert_eq!(export(&mut s, "svg"), svg, "SVG");
+    assert_eq!(export(&mut s, "pdf"), pdf, "PDF");
+}

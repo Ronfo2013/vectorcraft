@@ -38,8 +38,8 @@ struct TileEntry {
 
 #[derive(Default)]
 struct PatternCache {
-    /// Per ink ([`Ink`] as index).
-    tiles: [HashMap<String, TileEntry>; 3],
+    /// Per ink, indexed by [`Ink::slot`].
+    tiles: [HashMap<String, TileEntry>; Ink::COUNT],
     renderer: Option<Box<Renderer>>,
     depth: u32,
 }
@@ -137,8 +137,10 @@ pub(crate) fn set_pattern_paint(ctx: &mut RenderContext, name: &str, xf: Affine,
     let scale = raster_scale(s, (pw, ph));
     let params = (def.tile, def.tile_type, def.overlap);
     let hit = CACHE.with(|c| {
-        c.borrow().tiles[ink as usize]
-            .get(name)
+        c.borrow()
+            .tiles
+            .get(ink.slot())
+            .and_then(|t| t.get(name))
             .filter(|e| e.scale == scale && e.params == params && same_art(&e.art, &def.art))
             .map(|e| (e.pixmap.clone(), e.sx, e.sy))
     });
@@ -155,11 +157,12 @@ pub(crate) fn set_pattern_paint(ctx: &mut RenderContext, name: &str, xf: Affine,
             let (sx, sy) = (w as f64 / pw, h as f64 / ph);
             CACHE.with(|c| {
                 let mut c = c.borrow_mut();
-                let tiles = &mut c.tiles[ink as usize];
-                if tiles.len() > 64 {
-                    tiles.clear();
+                if let Some(tiles) = c.tiles.get_mut(ink.slot()) {
+                    if tiles.len() > 64 {
+                        tiles.clear();
+                    }
+                    tiles.insert(name.to_string(), TileEntry { art: def.art.clone(), params, scale, sx, sy, pixmap: pm.clone() });
                 }
-                tiles.insert(name.to_string(), TileEntry { art: def.art.clone(), params, scale, sx, sy, pixmap: pm.clone() });
             });
             (pm, sx, sy)
         }
@@ -361,6 +364,41 @@ mod tests {
             assert_eq!(r.pixel(x, y), [0, 0, 0, 255], "({x},{y})");
         }
         assert!(is_white(r.pixel(15, 5)) && is_white(r.pixel(65, 5)));
+    }
+
+    /// A pattern fill in a CMYK document that shows transparency is drawn once per ink plane
+    /// (and per screen ink): every ink has its own tile cache slot, so none indexes past the table
+    /// (`Ink::K` used to be index 3 of a 3-slot table once `Ink::RichBlack` was added).
+    #[test]
+    fn pattern_fills_draw_on_every_ink_plane() {
+        let mut d = doc_with_pattern(TileType::Grid);
+        d.color_mode = vectorcraft_doc::ColorMode::Cmyk;
+        let id = d.layers[0].children().unwrap()[0].id;
+        d.node_mut(id).unwrap().opacity = 0.5;
+        assert!(crate::ink::blends_in_cmyk(&d, &RenderOptions::default()));
+        let mut r = Renderer::new();
+        for rich_black in [false, true] {
+            let opts = RenderOptions { background: Some([255, 255, 255, 255]), rich_black, ..Default::default() };
+            let shown = r.render(&d, 200, 200, Affine::IDENTITY, &opts);
+            // Half-opaque red over white: pink, not paper.
+            let p = shown.pixel(5, 5);
+            assert!(p[0] > 200 && p[1] < 220 && p[1] > 60, "{p:?}");
+            assert!(is_white(shown.pixel(15, 5)), "{:?}", shown.pixel(15, 5));
+        }
+        let inks = r.render_region_inks(&d, Rect::new(0.0, 0.0, 200.0, 200.0), 1.0, &RenderOptions::default());
+        assert_eq!(inks.len(), 200 * 200 * 4);
+        let at = |x: usize, y: usize| &inks[(y * 200 + x) * 4..][..4];
+        assert!(at(5, 5).iter().any(|&v| v > 20), "the square has ink: {:?}", at(5, 5));
+        assert!(at(15, 5).iter().all(|&v| v == 0), "the gap has none: {:?}", at(15, 5));
+    }
+
+    #[test]
+    fn every_ink_has_its_own_slot() {
+        let slots = [Ink::Display, Ink::RichBlack, Ink::Cmy, Ink::K].map(Ink::slot);
+        for (i, s) in slots.iter().enumerate() {
+            assert!(*s < Ink::COUNT);
+            assert!(!slots[..i].contains(s));
+        }
     }
 
     #[test]

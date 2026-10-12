@@ -168,8 +168,8 @@ Layers panel.
 | Preferences: every option acts | partial | ~12 stored but unused (#394): Highlight Alternate Glyphs, Identify Objects By, East Asian Type units, Open Documents As Tabs, GPU Performance beyond Animated Zoom and Real-time Drawing, hyphenation language, Low Resolution Proxy for Linked EPS, scratch disks, legacy clipboard, Touch Workspace |
 | Preferences › General › Constrain Angle | done | arrow keys and Shift drags along the turned axes; Rectangle, Rounded Rectangle and Ellipse tools draw along them; not yet type, grids, polygons, stars or click-made shapes (#394) |
 | Preferences › General › Corner Radius | done | the Rounded Rectangle tool's and dialog's radius; ↑/↓ while drawing set it (#394) |
-| Preferences › Appearance of Black (On Screen, Printing / Exporting) | done | black ink alone as jet black on the canvas and in RGB/greyscale raster exports and Export for Screens; Save for Web and printing not yet (#394) |
-| Preferences › Performance › Real-time Drawing and Editing | done | off (or GPU Performance off): the art redraws at the release while the selection's outlines follow the drag (#394) |
+| Preferences › Appearance of Black (On Screen, Printing / Exporting) | done | black ink alone as jet black on the canvas and in RGB/greyscale raster exports, Export for Screens and Save for Web; SVG, PDF and printing keep the CMYK values (#394) |
+| Preferences › Performance › Real-time Drawing and Editing | done | off (or GPU Performance off): during a drag on the canvas the art redraws at the release while the selection's outlines follow the drag; dialog and panel previews still draw live (#394) |
 
 ## Look and feel
 
@@ -182,6 +182,7 @@ re-measure of the panels added since.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Preferences rows: Appearance of Black reaches Save for Web; Real-time Drawing off holds only canvas drags (#394 review fixes) |
 | 2026-10-12 | minor | Preferences rows: Constrain Angle, Corner Radius, Appearance of Black, Real-time Drawing and Editing done (#394 first batch); ~12 stored options left |
 | 2026-10-11 | minor | Pen, Anchor Point and Direct Selection drags: the preview gets every pointer position, including after the pointer re-enters the window and the move in the release's frame (#834); score unchanged (estimated) |
 | 2026-10-11 | minor | Units: a document saved as SVG reopens in its own units (#864); score unchanged (estimated) |

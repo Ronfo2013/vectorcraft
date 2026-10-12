@@ -81,6 +81,20 @@ impl Ink {
         if rich_black { Ink::RichBlack } else { Ink::Display }
     }
 
+    /// How many inks there are: the length of a per-ink table indexed by [`Self::slot`].
+    pub(crate) const COUNT: usize = 4;
+
+    /// This ink's index in a per-ink table of [`Self::COUNT`] entries. Explicit, so adding a
+    /// variant never moves another ink's slot past a table's end.
+    pub(crate) const fn slot(self) -> usize {
+        match self {
+            Ink::Display => 0,
+            Ink::RichBlack => 1,
+            Ink::Cmy => 2,
+            Ink::K => 3,
+        }
+    }
+
     /// Paints screen colours ([`Ink::Display`] or [`Ink::RichBlack`]), not an ink plane.
     pub(crate) fn is_display(self) -> bool {
         matches!(self, Ink::Display | Ink::RichBlack)
