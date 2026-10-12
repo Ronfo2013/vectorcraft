@@ -4106,3 +4106,4 @@ theme	Appearance	Erscheinungsbild
 @msg	unsupported native docking operation	Nicht unterstützte native Docking-Operation
 	Linux Display Server	Linux-Anzeigeserver
 	X11 (XWayland)	X11 (XWayland)
+@msg	{PATCH} (over the size limit)	{PATCH} (über der Größengrenze)

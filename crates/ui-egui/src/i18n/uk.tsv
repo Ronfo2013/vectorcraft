@@ -4132,3 +4132,4 @@ lighting	Light	Світло
 @msg	unsupported native docking operation	Непідтримувана власна операція прикріплення
 	Linux Display Server	Дисплейний сервер Linux
 	X11 (XWayland)	X11 (XWayland)
+@msg	{PATCH} (over the size limit)	{PATCH} (перевищено межу розміру)
