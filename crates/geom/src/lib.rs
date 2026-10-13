@@ -90,6 +90,31 @@ pub fn constrain_axes(deg: f64) -> Option<Affine> {
     Some(Affine::new([cos, -sin, sin, cos, 0.0, 0.0]))
 }
 
+/// A rotation by `deg` (clockwise as seen on the y-down page, as [`Affine::rotate`] takes it in
+/// radians), exact at quarter turns and the identity at whole turns; 0 is `Affine::rotate(0.0)`
+/// as before, and any other angle is `Affine::rotate` itself.
+pub fn rotate_deg(deg: f64) -> Affine {
+    if deg.is_finite() && deg != 0.0 {
+        let d = normalize_deg(deg);
+        if d == 0.0 {
+            return Affine::IDENTITY;
+        }
+        if d % 90.0 == 0.0
+            && let Some(a) = constrain_axes(-d)
+        {
+            return a;
+        }
+    }
+    Affine::rotate(deg.to_radians())
+}
+
+/// The `rotation` (degrees, as the shape and type commands take it) that turns a new object from
+/// the page axes onto the axes of Constrain Angle `base`; `None` for the page's own axes (0°, a
+/// whole turn, a non-finite angle), where new objects are drawn exactly as without it.
+pub fn constrain_rotation(base: f64) -> Option<f64> {
+    constrain_axes(base).map(|_| -normalize_deg(base))
+}
+
 /// Rect from two corner points in any order.
 pub fn rect_from_points(a: Point, b: Point) -> Rect {
     Rect::from_points(a, b)
@@ -121,6 +146,22 @@ mod tests {
         let a = constrain_axes(30.0).unwrap() * Point::new(1.0, 0.0);
         assert!((a.x - 30f64.to_radians().cos()).abs() < 1e-12 && (a.y + 0.5).abs() < 1e-12, "{a:?}");
         assert_eq!(constrain_angle_from(Vec2::new(5.0, 1.0), 45.0, 360.0), constrain_angle_from(Vec2::new(5.0, 1.0), 45.0, 0.0));
+    }
+
+    #[test]
+    fn rotate_deg_is_exact_at_quarter_turns() {
+        let v = Point::new(3.0, 4.0);
+        assert_eq!(rotate_deg(90.0) * v, Point::new(-4.0, 3.0));
+        assert_eq!(rotate_deg(-90.0) * v, Point::new(4.0, -3.0));
+        assert_eq!(rotate_deg(180.0) * v, Point::new(-3.0, -4.0));
+        assert_eq!(rotate_deg(-270.0) * v, rotate_deg(90.0) * v);
+        assert_eq!(rotate_deg(360.0) * v, v);
+        assert_eq!(rotate_deg(0.0), Affine::rotate(0.0));
+        assert_eq!(rotate_deg(30.0), Affine::rotate(30f64.to_radians()));
+        assert_eq!(constrain_rotation(30.0), Some(-30.0));
+        assert_eq!(constrain_rotation(0.0), None);
+        assert_eq!(constrain_rotation(-360.0), None);
+        assert_eq!(constrain_rotation(450.0), Some(-90.0));
     }
 
     #[test]

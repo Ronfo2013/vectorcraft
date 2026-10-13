@@ -33,8 +33,24 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("shape.line", "Line Segment", [], None, "{x1, y1, x2, y2} → {id}", has_doc, line),
         cmd!("shape.spiral", "Spiral", [], None, "{cx, cy, radius, decay=80 (%), segments=10, clockwise?} → {id}", has_doc, spiral),
         cmd!("shape.arc", "Arc", [], None, "{x1, y1, x2, y2, closed?} → {id}", has_doc, arc),
-        cmd!("shape.rectangularGrid", "Rectangular Grid", [], None, "{x, y, width, height, rows=5, columns=5} → {id}", has_doc, rect_grid),
-        cmd!("shape.polarGrid", "Polar Grid", [], None, "{x, y, width, height, concentric=5, radial=5} → {id}", has_doc, polar_grid),
+        cmd!(
+            "shape.rectangularGrid",
+            "Rectangular Grid",
+            [],
+            None,
+            "{x, y, width, height, rows=5, columns=5, rotation?: deg (about centre)} → {id}",
+            has_doc,
+            rect_grid
+        ),
+        cmd!(
+            "shape.polarGrid",
+            "Polar Grid",
+            [],
+            None,
+            "{x, y, width, height, concentric=5, radial=5, rotation?: deg (about centre)} → {id}",
+            has_doc,
+            polar_grid
+        ),
         cmd!(
             "path.create",
             "Create Path",
@@ -58,7 +74,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Create Text",
             [],
             None,
-            "{x, y, text, vertical?: bool = false, size?: pt, font?: family, style?, color?, area?: {width, height, fit?: none|autoHeight|shrinkText, fitMinPercent?}, placeholder?: bool (fill it with placeholder text instead, as the Type tools do with prefs placeholderText), leadingModel?: \"romanBaseline\"|\"emBoxTop\", charAlign?: \"romanBaseline\"|\"emBoxTop\"|\"emBoxCenter\"|\"emBoxBottom\"|\"icfTop\"|\"icfBottom\" (default: emBoxTop and emBoxCenter while the interface is in Japanese, else romanBaseline)} → {id}; new area type gets Auto Size (fit autoHeight) when the autoSizeAreaType preference is on",
+            "{x, y, text, rotation?: deg (about x, y), vertical?: bool = false, size?: pt, font?: family, style?, color?, area?: {width, height, fit?: none|autoHeight|shrinkText, fitMinPercent?}, placeholder?: bool (fill it with placeholder text instead, as the Type tools do with prefs placeholderText), leadingModel?: \"romanBaseline\"|\"emBoxTop\", charAlign?: \"romanBaseline\"|\"emBoxTop\"|\"emBoxCenter\"|\"emBoxBottom\"|\"icfTop\"|\"icfBottom\" (default: emBoxTop and emBoxCenter while the interface is in Japanese, else romanBaseline)} → {id}; new area type gets Auto Size (fit autoHeight) when the autoSizeAreaType preference is on",
             has_doc,
             text_create
         ),
@@ -79,6 +95,29 @@ pub(crate) fn add_node(s: &mut Session, label: &str, kind: NodeKind, appearance:
 
 /// Insert a new object looking like `look` (drawing modes apply); select it.
 pub(crate) fn add_look(s: &mut Session, label: &str, kind: NodeKind, look: NewArt, name: Option<String>) -> Result<Value> {
+    add_look_turned(s, label, kind, look, name, 0.0)
+}
+
+/// [`add_art`] for an object made turned by a `rotation` param (degrees, clockwise on the page):
+/// its bounding box turns with it, as after the Rotate tool.
+fn add_art_turned(s: &mut Session, label: &str, kind: NodeKind, rotation: f64) -> Result<Value> {
+    let look = s.new_art_look(s.paint.fill.clone(), s.paint.stroke.clone(), s.paint.stroke_width);
+    add_look_turned(s, label, kind, look, None, bbox_turn(rotation))
+}
+
+/// The bounding-box angle (counter-clockwise, as `Node::bbox_angle` and the Rotate tool keep it)
+/// of an object made with the clockwise `rotation` param: 0 exactly for none, a whole turn or a
+/// non-finite angle, so such objects are as they were.
+fn bbox_turn(rotation: f64) -> f64 {
+    if !rotation.is_finite() {
+        return 0.0;
+    }
+    let a = vectorcraft_geom::normalize_deg(-rotation);
+    if a == 0.0 { 0.0 } else { a }
+}
+
+/// [`add_look`] with the new object's bounding box turned to `bbox_angle`.
+fn add_look_turned(s: &mut Session, label: &str, kind: NodeKind, look: NewArt, name: Option<String>, bbox_angle: f64) -> Result<Value> {
     let parent = s.doc()?.target_parent()?;
     let mode = s.draw_mode;
     let inside = s.draw_inside;
@@ -88,6 +127,7 @@ pub(crate) fn add_look(s: &mut Session, label: &str, kind: NodeKind, look: NewAr
         let mut n = Node::new(id, kind);
         look.apply(d, &mut n);
         n.name = name;
+        n.bbox_angle = bbox_angle;
         match (mode, inside) {
             (crate::DrawMode::Inside, Some(target)) if d.node(target).is_some() => {
                 // Wrap the target once in a clip group [mask copy, target, …new art].
@@ -160,6 +200,34 @@ fn path_kind(path: PathData, live: Option<LiveShape>) -> NodeKind {
     NodeKind::Path { path, rule: FillRule::NonZero, live, clipping: false, guide: false }
 }
 
+/// A click-to-size shape dialog's command `cmd` with `params` drawn along General › Constrain
+/// Angle, as the reference app draws new objects along it
+/// (<https://helpx.adobe.com/illustrator/desktop/manage-objects/arrange-objects/rotate-objects-by-specific-angles.html>):
+/// a box (rectangle, ellipse, grid) keeps its corner at the click (`x`, `y`) and runs along the
+/// turned axes, a polygon or star turns its base orientation about its centre. The params as they
+/// are at 0° or a whole turn, for other commands and when they already carry a `rotation`.
+pub fn constrain_click(s: &Session, cmd: &str, mut params: Value) -> Value {
+    let base = s.prefs.constrain_angle;
+    let (Some(rotation), Some(axes)) = (vectorcraft_geom::constrain_rotation(base), vectorcraft_geom::constrain_axes(base)) else { return params };
+    let Some(o) = params.as_object_mut().filter(|o| !o.contains_key("rotation")) else { return params };
+    match cmd {
+        "shape.rectangle" | "shape.ellipse" | "shape.rectangularGrid" | "shape.polarGrid" => {
+            let num = |k: &str| o.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
+            let (Some(x), Some(y), Some(w), Some(h)) = (num("x"), num("y"), num("width"), num("height")) else { return params };
+            // The box's centre along the turned axes from the corner; the command turns it there.
+            let c = Point::new(x, y) + (axes * Point::new(w / 2.0, h / 2.0)).to_vec2();
+            o.insert("x".into(), json!(c.x - w / 2.0));
+            o.insert("y".into(), json!(c.y - h / 2.0));
+            o.insert("rotation".into(), json!(rotation));
+        }
+        "shape.polygon" | "shape.star" => {
+            o.insert("rotation".into(), json!(rotation));
+        }
+        _ => {}
+    }
+    params
+}
+
 fn rect_of(p: &Value, cmd: &str) -> Result<Rect> {
     let x = f64_req(p, "x", cmd)?;
     let y = f64_req(p, "y", cmd)?;
@@ -179,7 +247,8 @@ fn rect_transform(r: Rect, p: &Value, cmd: &str) -> Result<Affine> {
     if rotation == 0.0 {
         return Ok(Affine::translate(r.origin().to_vec2()));
     }
-    Ok(Affine::translate(r.center().to_vec2()) * Affine::rotate(rotation.to_radians()) * Affine::translate((-r.width() / 2.0, -r.height() / 2.0)))
+    // Exact at quarter turns (a Constrain Angle of 90°).
+    Ok(Affine::translate(r.center().to_vec2()) * vectorcraft_geom::rotate_deg(rotation) * Affine::translate((-r.width() / 2.0, -r.height() / 2.0)))
 }
 
 fn rectangle(s: &mut Session, p: &Value) -> Result<Value> {
@@ -193,13 +262,13 @@ fn rectangle(s: &mut Session, p: &Value) -> Result<Value> {
         xf: rect_transform(r, p, "shape.rectangle")?,
     };
     let label = if radius > 0.0 { "Rounded Rectangle" } else { "Rectangle" };
-    add_art(s, label, path_kind(live.to_path(), Some(live)), None)
+    add_art_turned(s, label, path_kind(live.to_path(), Some(live)), f64_or(p, "rotation", 0.0))
 }
 
 fn ellipse(s: &mut Session, p: &Value) -> Result<Value> {
     let r = rect_of(p, "shape.ellipse")?;
     let live = LiveShape::Ellipse { w: r.width(), h: r.height(), pie: (0.0, 360.0), xf: rect_transform(r, p, "shape.ellipse")? };
-    add_art(s, "Ellipse", path_kind(live.to_path(), Some(live)), None)
+    add_art_turned(s, "Ellipse", path_kind(live.to_path(), Some(live)), f64_or(p, "rotation", 0.0))
 }
 
 fn polygon(s: &mut Session, p: &Value) -> Result<Value> {
@@ -207,9 +276,9 @@ fn polygon(s: &mut Session, p: &Value) -> Result<Value> {
     let r = f64_req(p, "radius", "shape.polygon")?.abs();
     let sides = p.get("sides").and_then(Value::as_u64).unwrap_or(6).clamp(3, 1000) as u32;
     let rot = f64_or(p, "rotation", 0.0);
-    let xf = Affine::translate(c.to_vec2()) * Affine::rotate(rot.to_radians());
+    let xf = Affine::translate(c.to_vec2()) * vectorcraft_geom::rotate_deg(rot);
     let live = LiveShape::Polygon { radius: r, sides, xf, radii: vec![], kinds: vec![] };
-    add_art(s, "Polygon", path_kind(live.to_path(), Some(live)), None)
+    add_art_turned(s, "Polygon", path_kind(live.to_path(), Some(live)), rot)
 }
 
 fn star(s: &mut Session, p: &Value) -> Result<Value> {
@@ -217,8 +286,15 @@ fn star(s: &mut Session, p: &Value) -> Result<Value> {
     let r1 = f64_req(p, "radius1", "shape.star")?.abs();
     let r2 = f64_or(p, "radius2", r1 / 2.0).abs();
     let n = p.get("points").and_then(Value::as_u64).unwrap_or(5).clamp(2, 1000) as u32;
-    let path = shapes::star(c, r1, r2, n, f64_or(p, "rotation", 0.0));
-    add_art(s, "Star", path_kind(path, None), None)
+    let rot = f64_or(p, "rotation", 0.0);
+    let turn = vectorcraft_geom::rotate_deg(rot);
+    // A quarter or whole turn (a Constrain Angle of 90°, say) turns the upright star exactly.
+    let path = if rot != 0.0 && turn.as_coeffs()[..4].iter().all(|c| c.fract() == 0.0) {
+        shapes::star(Point::ZERO, r1, r2, n, 0.0).transformed(Affine::translate(c.to_vec2()) * turn)
+    } else {
+        shapes::star(c, r1, r2, n, rot)
+    };
+    add_art_turned(s, "Star", path_kind(path, None), rot)
 }
 
 /// Flare tool: a lens flare built from radial-gradient paths in Screen mode — a bright centre, a halo
@@ -351,7 +427,7 @@ fn arc(s: &mut Session, p: &Value) -> Result<Value> {
     add_art(s, "Arc", path_kind(shapes::arc(a, b, 0.0, bool_or(p, "closed", false)), None), None)
 }
 
-fn grid_group(s: &mut Session, label: &str, paths: Vec<PathData>) -> Result<Value> {
+fn grid_group(s: &mut Session, label: &str, (paths, bbox_angle): (Vec<PathData>, f64)) -> Result<Value> {
     let parent = s.doc()?.target_parent()?;
     let look = s.new_art_look(vectorcraft_color::Paint::None, s.paint.stroke.clone(), s.paint.stroke_width);
     let id = s.edit(label, |d, sel| {
@@ -360,11 +436,14 @@ fn grid_group(s: &mut Session, label: &str, paths: Vec<PathData>) -> Result<Valu
             .map(|pd| {
                 let mut n = Node::path(d.alloc_id(), pd, Appearance::default());
                 look.apply(d, &mut n);
+                n.bbox_angle = bbox_angle;
                 std::sync::Arc::new(n)
             })
             .collect();
         let gid = d.alloc_id();
-        d.insert(parent, usize::MAX, Node::group(gid, children))?;
+        let mut g = Node::group(gid, children);
+        g.bbox_angle = bbox_angle;
+        d.insert(parent, usize::MAX, g)?;
         sel.set([gid]);
         Ok(gid)
     })?;
@@ -375,14 +454,31 @@ fn rect_grid(s: &mut Session, p: &Value) -> Result<Value> {
     let r = rect_of(p, "shape.rectangularGrid")?;
     let rows = p.get("rows").and_then(Value::as_u64).unwrap_or(5).min(999) as u32;
     let cols = p.get("columns").and_then(Value::as_u64).unwrap_or(5).min(999) as u32;
-    grid_group(s, "Rectangular Grid", shapes::rectangular_grid(r, rows, cols, true))
+    grid_group(s, "Rectangular Grid", turned_grid(p, r, shapes::rectangular_grid(r, rows, cols, true), "shape.rectangularGrid")?)
 }
 
 fn polar_grid(s: &mut Session, p: &Value) -> Result<Value> {
     let r = rect_of(p, "shape.polarGrid")?;
     let c = p.get("concentric").and_then(Value::as_u64).unwrap_or(5).min(999) as u32;
     let rad = p.get("radial").and_then(Value::as_u64).unwrap_or(5).min(999) as u32;
-    grid_group(s, "Polar Grid", shapes::polar_grid(r, c, rad))
+    grid_group(s, "Polar Grid", turned_grid(p, r, shapes::polar_grid(r, c, rad), "shape.polarGrid")?)
+}
+
+/// A grid's paths in `r` turned by the `rotation` param about the centre of `r` (a grid drawn
+/// along a Constrain Angle), and their bounding-box angle; as they are without it or at 0.
+fn turned_grid(p: &Value, r: Rect, mut paths: Vec<PathData>, cmd: &str) -> Result<(Vec<PathData>, f64)> {
+    let rotation = if p.get("rotation").is_some() { f64_req(p, "rotation", cmd)? } else { 0.0 };
+    if !rotation.is_finite() {
+        return Err(bad(cmd, "rotation must be finite"));
+    }
+    if rotation != 0.0 {
+        let c = r.center().to_vec2();
+        let m = Affine::translate(c) * vectorcraft_geom::rotate_deg(rotation) * Affine::translate(-c);
+        for path in &mut paths {
+            path.transform(m);
+        }
+    }
+    Ok((paths, bbox_turn(rotation)))
 }
 
 /// An anchor `{x, y, in?, out?, smooth?}` given to `cmd` (handles `[x, y]`, at the anchor when
@@ -436,6 +532,15 @@ fn text_create(s: &mut Session, p: &Value) -> Result<Value> {
     let y = f64_req(p, "y", "text.create")?;
     let text = str_param(p, "text").unwrap_or("");
     let mut t = TextObject::point(Point::new(x, y), text, new_type_style(s, p));
+    // Turned about the point (the first baseline's start, an area's top-left corner): type set
+    // along a Constrain Angle.
+    let rotation = if p.get("rotation").is_some() { f64_req(p, "rotation", "text.create")? } else { 0.0 };
+    if !rotation.is_finite() {
+        return Err(bad("text.create", "rotation must be finite"));
+    }
+    if rotation != 0.0 {
+        t.xf *= vectorcraft_geom::rotate_deg(rotation);
+    }
     t.vertical = p.get("vertical").and_then(Value::as_bool).unwrap_or(false);
     t.para = new_type_para();
     new_type_alignment(s, p, "text.create", &mut t)?;
@@ -451,7 +556,7 @@ fn text_create(s: &mut Session, p: &Value) -> Result<Value> {
         // Lays the text out (and sizes an Auto Size frame).
         super::typecmd::refresh_bounds(&mut t);
     }
-    add_node(s, "Type", NodeKind::Text(Box::new(t)), Appearance::default(), None)
+    add_look_turned(s, "Type", NodeKind::Text(Box::new(t)), NewArt::plain(Appearance::default()), None, bbox_turn(rotation))
 }
 
 /// The paragraph attributes new type gets (the Type tools, `text.create`): aligned to the start of
