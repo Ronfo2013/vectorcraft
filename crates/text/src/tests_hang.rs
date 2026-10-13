@@ -207,3 +207,169 @@ fn old_files_lay_out_unchanged() {
     let back: TextObject = serde_json::from_value(json).unwrap();
     assert!(back.optical_margin && back.para.roman_hanging);
 }
+
+/// The non-space glyphs of each line.
+fn inked<'a>(t: &TextObject, l: &'a TextLayout) -> Vec<(&'a LineInfo, Vec<&'a PositionedGlyph>)> {
+    l.lines
+        .iter()
+        .map(|li| (li, l.glyphs.get(li.glyph_start..li.glyph_end).unwrap_or_default().iter().filter(|g| !is_space(ch(t, g))).collect()))
+        .collect()
+}
+
+/// A right-to-left run inside a left-to-right paragraph: its characters (and the full stops the
+/// bidi algorithm puts inside it) don't hang, since the reordering may set them away from the
+/// edge; nothing passes the frame but what hangs at the line's visual edge.
+#[test]
+fn right_to_left_runs_in_a_left_to_right_paragraph_dont_hang() {
+    let shalom = "\u{05E9}\u{05DC}\u{05D5}\u{05DD}";
+    let text = format!("Go {shalom} {shalom} {shalom}. {shalom} {shalom}. abc def");
+    for composer in [Composer::SingleLine, Composer::EveryLine] {
+        let mut t = area(&text, 12.0, Rect::new(0.0, 0.0, 56.0, 400.0), Justify::JustifyLeft);
+        t.para.composer = composer;
+        t.para.roman_hanging = true;
+        let l = layout(db(), &t);
+        assert!(!l.overflow);
+        assert!(l.glyphs.iter().any(|g| g.rtl));
+        for (li, gs) in inked(&t, &l) {
+            let leftmost = gs.iter().copied().min_by(|a, b| a.origin.x.total_cmp(&b.origin.x));
+            let rightmost = gs.iter().copied().max_by(|a, b| a.origin.x.total_cmp(&b.origin.x));
+            for g in &gs {
+                let c = ch(&t, g);
+                // Only a left-to-right character at the line's visual start or end may hang.
+                let lo = if !g.rtl && leftmost.is_some_and(|f| std::ptr::eq(f, *g)) { ratio(c, Edge::Start, true, false) * g.advance } else { 0.0 };
+                let hi = if !g.rtl && rightmost.is_some_and(|f| std::ptr::eq(f, *g)) { ratio(c, Edge::End, true, false) * g.advance } else { 0.0 };
+                assert!(g.origin.x >= li.avail.0 - lo - 1e-6, "{composer:?}: {c:?} starts at {} before {}", g.origin.x, li.avail.0);
+                assert!(
+                    g.origin.x + g.advance <= li.avail.1 + hi + 1e-6,
+                    "{composer:?}: {c:?} ends at {} past {}",
+                    g.origin.x + g.advance,
+                    li.avail.1
+                );
+            }
+        }
+    }
+}
+
+/// Centred lines centre what doesn't hang: the hung characters stand outside it at either end.
+#[test]
+fn centred_lines_centre_the_text_between_the_hung_characters() {
+    let mut t = area(TEXT, 12.0, Rect::new(0.0, 0.0, 150.0, 4000.0), Justify::Center);
+    t.para.roman_hanging = true;
+    let l = layout(db(), &t);
+    let mut hung = 0;
+    for (k, (li, gs)) in inked(&t, &l).into_iter().enumerate() {
+        let (Some(first), Some(last)) = (gs.first(), gs.last()) else { continue };
+        let (r0, r1) = (ratio(ch(&t, first), Edge::Start, true, false), ratio(ch(&t, last), Edge::End, true, false));
+        hung += usize::from(r0 > 0.0) + usize::from(r1 > 0.0);
+        let body_start = first.origin.x + r0 * first.advance;
+        let body_end = last.origin.x + last.advance - r1 * last.advance;
+        assert!(((body_start - li.avail.0) - (li.avail.1 - body_end)).abs() < 1e-6, "line {k}: {body_start} … {body_end} in {:?}", li.avail);
+    }
+    assert!(hung >= 2, "{hung}");
+}
+
+/// Vertical type doesn't hang: both options leave its layout as it was, point and area type.
+#[test]
+fn vertical_type_doesnt_hang() {
+    for frame in [None, Some(Rect::new(0.0, 0.0, 200.0, 100.0))] {
+        let mut t =
+            TextObject::point(Point::ZERO, "\u{201C}Quote,\u{201D} said W. \u{201C}Again.\u{201D}", CharStyle { size: 20.0, ..CharStyle::default() });
+        t.xf = Affine::IDENTITY;
+        t.vertical = true;
+        t.para.justify = Justify::JustifyAll;
+        if let Some(frame) = frame {
+            t.kind = TextKind::Area { frame: PathData::from_bezpath(&frame.to_path(0.1)) };
+        }
+        let before = layout(db(), &t);
+        t.para.roman_hanging = true;
+        t.optical_margin = true;
+        let after = layout(db(), &t);
+        let at = |l: &TextLayout| l.glyphs.iter().map(|g| (g.origin, g.advance)).collect::<Vec<_>>();
+        assert_eq!(at(&before), at(&after), "area {}", frame.is_some());
+    }
+}
+
+/// Glyph Scaling and Letter Spacing of justified lines leave the hung first and last characters
+/// as they are, so they hang exactly as far as the table says and the text beside them stands on
+/// the edges.
+#[test]
+fn glyph_scaling_and_letter_spacing_keep_the_hung_edges() {
+    use vectorcraft_doc::{Justification, SpacingRange};
+    for composer in [Composer::SingleLine, Composer::EveryLine] {
+        let mut t = area(TEXT, 12.0, Rect::new(0.0, 0.0, 160.0, 4000.0), Justify::JustifyAll);
+        t.para.composer = composer;
+        t.para.roman_hanging = true;
+        t.para.justification = Justification {
+            letter_spacing: SpacingRange::new(-5.0, 0.0, 20.0),
+            glyph_scaling: SpacingRange::new(95.0, 100.0, 105.0),
+            ..Justification::default()
+        };
+        let l = layout(db(), &t);
+        let mut hung = 0;
+        for (c0, before, c1, after) in edges(&t, &l, true, false) {
+            assert!(before.abs() < 1e-6 && after.abs() < 1e-6, "{composer:?}: {c0:?} {before} / {c1:?} {after}");
+            hung += usize::from(ratio(c0, Edge::Start, true, false) > 0.0) + usize::from(ratio(c1, Edge::End, true, false) > 0.0);
+        }
+        assert!(hung >= 3, "{composer:?}: {hung}");
+        // The character after a mark hung wholly outside the start stands on the edge.
+        for (li, gs) in inked(&t, &l) {
+            if let [first, second, ..] = gs[..]
+                && ratio(ch(&t, first), Edge::Start, true, false) == 1.0
+            {
+                assert!((second.origin.x - li.avail.0).abs() < 1e-6, "{composer:?}: {:?} at {}", ch(&t, second), second.origin.x);
+            }
+        }
+    }
+}
+
+/// Standard burasagari with a hung opening quote: the quote's hang is room on the line, so a
+/// comma that fits once the quote hangs stays inside (ends on the edge) instead of hanging.
+/// Needs a font with full-width Japanese punctuation (skipped without one).
+#[test]
+fn burasagari_counts_the_hung_start() {
+    use vectorcraft_doc::Burasagari;
+    let lay = |text: &str, roman: bool| {
+        let mut t = area(text, 20.0, Rect::new(0.0, 0.0, 100.0, 200.0), Justify::JustifyLeft);
+        t.para.burasagari = Burasagari::Standard;
+        t.para.roman_hanging = roman;
+        layout(db(), &t)
+    };
+    if (lay("\u{4E00}\u{3001}\u{4E8C}", false).glyphs[1].advance - 20.0).abs() > 2.0 {
+        return; // no font with full-width punctuation here
+    }
+    let l = lay("\u{201C}\u{4E00}\u{4E8C}\u{4E09}\u{56DB}\u{3001}\u{4E94}\u{516D}\u{4E03}", true);
+    let (quote, comma) = (&l.glyphs[0], &l.glyphs[5]);
+    assert_eq!(comma.line, quote.line, "、 ends the first line");
+    assert!((quote.origin.x + quote.advance).abs() < 1e-6, "the quote hangs: {:?}", quote.origin);
+    assert!((comma.origin.x + comma.advance - 100.0).abs() < 1e-6, "、 inside, on the edge: {:?} {}", comma.origin, comma.advance);
+}
+
+/// Line-end Punctuation Half Width with Roman Hanging Punctuation: both composers break and place
+/// alike (a bracket set flush at a line's start, quotes hanging), every line on its hung edges.
+#[test]
+fn mojikumi_and_roman_hanging_agree() {
+    use vectorcraft_doc::Mojikumi;
+    let text = format!("{TEXT} \u{300C}\u{4E00}\u{4E8C}\u{300D} \u{201C}words\u{201D} {TEXT}");
+    for composer in [Composer::SingleLine, Composer::EveryLine] {
+        let mut t = area(&text, 12.0, Rect::new(0.0, 0.0, 150.0, 4000.0), Justify::JustifyLeft);
+        t.para.composer = composer;
+        t.para.mojikumi = Mojikumi::LineEndHalf;
+        t.para.hyphenate = true;
+        t.para.roman_hanging = true;
+        let l = layout(db(), &t);
+        assert!(!l.overflow);
+        let n = l.lines.len();
+        for (k, (c0, before, c1, after)) in edges(&t, &l, true, false).into_iter().enumerate() {
+            if c0 != '\u{300C}' {
+                assert!(before.abs() < 1e-6, "{composer:?} line {k} starts {c0:?}: {before}");
+            }
+            if k + 1 < n && !matches!(c1, '\u{300D}' | '\u{3001}' | '\u{3002}') {
+                assert!(
+                    after.abs() < 1e-6,
+                    "{composer:?} line {k} ends {c1:?}: {after} {:?}",
+                    l.lines.iter().map(|li| &text[li.start..li.end]).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+}

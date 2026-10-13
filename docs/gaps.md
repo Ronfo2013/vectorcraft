@@ -149,7 +149,7 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 ## G4 Advanced type
 
 - **Missing:** type core polish (Hyphenation… and Justification… options, Optical Margin Alignment and Roman
-  Hanging Punctuation done 2026-10-13, not yet compared side by side; hanging in right-to-left paragraphs and type on
+  Hanging Punctuation done 2026-10-13, not yet compared side by side; hanging in right-to-left text, vertical type and type on
   a path); CJK vertical
   composition (ruby, mojikumi sets and dialog, kinsoku settings #633, manual tate-chu-yoko), Middle Eastern
   features beyond bidi, variable font axes, spell check with an open dictionary,

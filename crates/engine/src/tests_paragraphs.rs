@@ -506,3 +506,58 @@ fn optical_margin_alignment_toggles_the_story_undoes_and_saves() {
     assert!(text(&o, id).optical_margin && text(&o, a).optical_margin && text(&o, b).optical_margin);
     assert_eq!(first_x(&text(&o, id)), first_x(&text(&s, id)));
 }
+
+fn undo_len(s: &Session) -> usize {
+    s.doc().unwrap().history.undo.len()
+}
+
+/// Each change is one undo step; setting what is already set adds none.
+#[test]
+fn hanging_options_add_one_undo_step_or_none() {
+    let mut s = session();
+    let id = area(&mut s, "\u{201C}One\u{201D}\n\u{201C}Two\u{201D}");
+    for (cmd, base) in [("text.romanHangingPunctuation", json!({"ids": [id]})), ("type.opticalMarginAlignment", json!({"ids": [id]}))] {
+        let n = undo_len(&s);
+        let with = |on: Option<bool>| {
+            let mut p = base.clone();
+            if let Some(on) = on {
+                p["on"] = json!(on);
+            }
+            p
+        };
+        assert_eq!(s.execute(cmd, &with(Some(false))).unwrap()["on"], json!(false));
+        assert_eq!(undo_len(&s), n, "{cmd}: already off");
+        s.execute(cmd, &with(None)).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "{cmd}: toggled on");
+        assert_eq!(s.execute(cmd, &with(Some(true))).unwrap()["on"], json!(true));
+        assert_eq!(undo_len(&s), n + 1, "{cmd}: already on");
+        s.execute(cmd, &with(Some(false))).unwrap();
+        assert_eq!(undo_len(&s), n + 2, "{cmd}: off");
+        s.execute(cmd, &json!({"ids": [id], "query": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 2, "{cmd}: a query");
+    }
+}
+
+/// Optical Margin Alignment is the story's: frames threaded with different settings take the
+/// first frame's, whichever way round, and a toggle on any frame sets the whole story.
+#[test]
+fn threaded_frames_share_the_first_frames_optical_margin() {
+    for head_on in [true, false] {
+        let mut s = session();
+        let story = "Wave \u{201C}quoted\u{201D} words, and more words to fill the frames. ".repeat(4);
+        let a = s.execute("text.create", &json!({"x": 10, "y": 300, "text": story, "area": {"width": 150, "height": 40}})).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let b = s.execute("text.create", &json!({"x": 200, "y": 300, "text": "", "area": {"width": 150, "height": 200}})).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        s.execute("type.opticalMarginAlignment", &json!({"ids": [if head_on { a } else { b }], "on": true})).unwrap();
+        assert_ne!(text(&s, a).optical_margin, text(&s, b).optical_margin);
+        s.execute("select.set", &json!({"ids": [a, b]})).unwrap();
+        s.execute("text.thread.create", &json!({})).unwrap();
+        assert_eq!((text(&s, a).optical_margin, text(&s, b).optical_margin), (head_on, head_on), "head on: {head_on}");
+        assert_eq!(s.execute("type.opticalMarginAlignment", &json!({"ids": [b], "query": true})).unwrap()["mixed"], json!(false));
+        s.execute("type.opticalMarginAlignment", &json!({"ids": [b]})).unwrap();
+        assert_eq!((text(&s, a).optical_margin, text(&s, b).optical_margin), (!head_on, !head_on));
+    }
+}

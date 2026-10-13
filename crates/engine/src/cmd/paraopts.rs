@@ -49,7 +49,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Roman Hanging Punctuation",
             [],
             None,
-            "{ids?|id?, start?: byte, end?: byte, on?: bool, query?: bool} Paragraph panel menu › Roman Hanging Punctuation, per paragraph: quotation marks, hyphens, full stops and commas at either edge of a line stand wholly outside it, asterisks, tildes, ellipses, en and em dashes, colons and semicolons half outside; justified lines fill to the hung edges (left-to-right paragraphs, area and point type). `on` sets it on the target paragraphs (with `start`/`end`: those the range touches), without it toggles (on unless every target paragraph has it), one undo step → {ids, on}; `query: true` → the first target paragraph's {on}",
+            "{ids?|id?, start?: byte, end?: byte, on?: bool, query?: bool} Paragraph panel menu › Roman Hanging Punctuation, per paragraph: quotation marks, hyphens, full stops and commas at either edge of a line stand wholly outside it, asterisks, tildes, ellipses, en and em dashes, colons and semicolons half outside; justified lines fill to the hung edges (horizontal area and point type; not in vertical type, and only characters set left to right). `on` sets it on the target paragraphs (with `start`/`end`: those the range touches), without it toggles (on unless every target paragraph has it), one undo step (none when nothing changes) → {ids, on}; `query: true` → the first target paragraph's {on}",
             has_doc,
             roman_hanging
         ),
@@ -58,7 +58,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Optical Margin Alignment",
             [],
             None,
-            "{ids?|id?, on?: bool, query?: bool} Type › Optical Margin Alignment, for every paragraph of the selected type objects (and the frames threaded with them): punctuation (as Roman Hanging Punctuation) and the edges of letters such as A, T, V, W and Y stand partly outside both edges of each line so they look straight; justified lines fill to the hung edges. `on` sets it, without it toggles (on unless every target has it), one undo step → {ids, on}; `query: true` → {on (the first target's), mixed, ids}",
+            "{ids?|id?, on?: bool, query?: bool} Type › Optical Margin Alignment, for every paragraph of the selected type objects (and the frames threaded with them): punctuation (as Roman Hanging Punctuation) and the edges of letters such as A, T, V, W and Y stand partly outside both edges of each line so they look straight; justified lines fill to the hung edges (horizontal type only, characters set left to right). `on` sets it, without it toggles (on unless every target has it), one undo step (none when nothing changes) → {ids, on}; `query: true` → {on (the first target's), mixed, ids}",
             has_doc,
             optical_margin
         ),
@@ -363,6 +363,10 @@ fn optical_margin(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Toggled: on unless every target already has it.
     let on = on.unwrap_or_else(|| !states.iter().all(|&v| v));
+    if states.iter().all(|&v| v == on) {
+        // Nothing to change: no undo step.
+        return Ok(json!({ "on": on, "ids": ids_json }));
+    }
     s.edit("Optical Margin Alignment", |d, _| {
         for id in &ids {
             if let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind)
@@ -384,22 +388,28 @@ fn roman_hanging(s: &mut Session, p: &Value) -> Result<Value> {
         let para = first_para(s, p, C)?;
         return Ok(json!({ "on": para.roman_hanging }));
     }
-    let on = match on {
-        Some(v) => v,
-        None => {
-            // Toggled: on unless every target paragraph already has it.
-            let ids = text_targets(s, p, C)?;
-            let range = TextRange::parse(p, C)?;
-            let st = s.doc()?;
-            !ids.iter().all(|id| match st.doc.node(*id).map(|n| &n.kind) {
-                Some(NodeKind::Text(t)) => {
-                    let span = para_span(range, t).unwrap_or(0..t.paragraph_count());
-                    span.into_iter().all(|k| t.para_at(k).roman_hanging)
-                }
-                _ => true,
+    // Every target paragraph's state.
+    let ids = text_targets(s, p, C)?;
+    let states: Vec<bool> = {
+        let range = TextRange::parse(p, C)?;
+        let st = s.doc()?;
+        ids.iter()
+            .filter_map(|id| match st.doc.node(*id).map(|n| &n.kind) {
+                Some(NodeKind::Text(t)) => Some(t),
+                _ => None,
             })
-        }
+            .flat_map(|t| {
+                let span = para_span(range, t).unwrap_or(0..t.paragraph_count());
+                span.map(|k| t.para_at(k).roman_hanging).collect::<Vec<_>>()
+            })
+            .collect()
     };
+    // Toggled: on unless every target paragraph already has it.
+    let on = on.unwrap_or_else(|| !states.iter().all(|&v| v));
+    if states.iter().all(|&v| v == on) {
+        // Nothing to change: no undo step.
+        return Ok(json!({ "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>(), "on": on }));
+    }
     let mut out = edit_paras(s, p, C, "Roman Hanging Punctuation", |para| para.roman_hanging = on)?;
     if let Some(o) = out.as_object_mut() {
         o.insert("on".into(), json!(on));
