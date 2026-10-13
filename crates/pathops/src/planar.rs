@@ -616,15 +616,42 @@ pub(crate) fn map(shapes: &[Shape]) -> Option<Map> {
             (points.len() - 1, p)
         })
     };
+    let mut raw: Vec<(Vec<Seg>, [usize; 2])> = Vec::new();
+    for idx in top.segment_indices() {
+        let segs: Vec<Seg> = positions[idx].path.segments().map(to_seg).collect();
+        let ((v0, _), (v1, _)) = (vertex_id(top.point(idx.first_half()).to_kurbo()), vertex_id(top.point(idx.second_half()).to_kurbo()));
+        if !segs.is_empty() && v0 != v1 {
+            raw.push((segs, [v0, v1]));
+        }
+    }
+    // Where two passes of one path cross another (an open path's way there and back, coincident
+    // outlines), the sweep can cut them a rounding error apart, a little over `eps`, and join the
+    // two cuts with a stub of that length: a speck of a piece, and a vertex twice over, so the
+    // passes stay two edges and a chain of pieces runs out along one and back along the other
+    // (a piece keyed by an input it isn't cut out of). Such stubs are no edges: their ends are one
+    // vertex. The sweep moves points by a few `eps` at most up and down its frame; along a path
+    // that runs nearly level in it (a curve near the top of its bulge, where the height a cut is
+    // found at pins its position down least) a cut can slide further, here up to a small fraction
+    // of the precision results are tidied to, below which no edge is drawn anyway.
+    let (stub_y, stub_x) = (4.0 * eps, (DEFAULT_PRECISION / 16.0).max(4.0 * eps));
+    let mut parent: Vec<usize> = (0..points.len()).collect();
+    for (segs, [v0, v1]) in &raw {
+        let Some(&p0) = points.get(*v0) else { continue };
+        if segs.iter().flat_map(|s| [s.c.p1, s.c.p2, s.c.p3]).all(|p| (p.y - p0.y).abs() <= stub_y && (p.x - p0.x).abs() <= stub_x) {
+            let (a, b) = (find(&mut parent, *v0), find(&mut parent, *v1));
+            if let Some(p) = parent.get_mut(a.max(b)) {
+                *p = a.min(b);
+            }
+        }
+    }
     let mut edges: Vec<Edge> = Vec::new();
     let mut between: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
     let outlines = Outlines::new(&inputs, eps);
-    for idx in top.segment_indices() {
-        let half = idx.first_half();
-        let mut segs: Vec<Seg> = positions[idx].path.segments().map(to_seg).collect();
-        let ((v0, p0), (v1, p1)) = (vertex_id(top.point(half).to_kurbo()), vertex_id(top.point(idx.second_half()).to_kurbo()));
+    for (mut segs, [v0, v1]) in raw {
+        let (v0, v1) = (find(&mut parent, v0), find(&mut parent, v1));
+        let (Some(&p0), Some(&p1)) = (points.get(v0), points.get(v1)) else { continue };
         let ends = [v0, v1];
-        if segs.is_empty() || v0 == v1 {
+        if v0 == v1 {
             continue;
         }
         // Every edge at a vertex starts or ends exactly on it, so faces meeting there share its
@@ -1283,6 +1310,79 @@ mod tests {
         assert_eq!(lines.iter().filter(|l| l.key == 1).count(), 4);
         // The vertical line: cut by the square's sides and every hatch line.
         assert_eq!(lines.iter().filter(|l| l.key == n as u64).count(), n as usize + 2);
+    }
+
+    /// Each piece cuts out of the input it is keyed by, losing just its own length (what erasing
+    /// it does), and none is a speck.
+    fn assert_pieces_cut_out(shapes: &[Shape], arr: &BuilderArrangement) {
+        for e in arr.edges.iter().chain(&arr.lines) {
+            let len = e.path.length();
+            assert!(len > 1e-3, "a speck of a piece, keyed {}: {:?}", e.key, e.path);
+            let s = &shapes[e.key as usize];
+            let cut = cut_out(&s.path, &e.path.subpaths[0], false, 0.05).unwrap_or_else(|| panic!("{:?} not on input {}", e.path, e.key));
+            let lost = s.path.length() - cut.length();
+            assert!((lost - len).abs() <= 1e-6 * s.path.length(), "input {} lost {lost} for a piece {len} long", e.key);
+        }
+    }
+
+    #[test]
+    fn a_line_crossed_where_its_two_passes_part_is_cut_once() {
+        // The shrunk case of `pieces_cut_out_of_their_inputs`: the sweep cut the first line's way
+        // there and its way back by the third line a rounding error (1.2e-6) apart, joined by a
+        // stub. The line came back as a speck keyed by the third line and a piece running from
+        // the crossing out to (10, 70) and back to the other cut, which erasing took twice over.
+        let s = [line((10.0, 70.0), (80.0, 20.0), 0), line((10.0, 40.0), (70.0, 90.0), 0), line((20.0, 80.0), (20.0, 50.0), 0)];
+        let arr = shape_builder(&s, true);
+        assert_pieces_cut_out(&s, &arr);
+        // The first line cut by both others, the other two once each.
+        let count = |k: u64| arr.lines.iter().filter(|l| l.key == k).count();
+        assert_eq!((count(0), count(1), count(2)), (3, 2, 2), "{:?}", arr.lines);
+        let at = Point::new(20.0, 70.0 - 50.0 / 7.0);
+        for k in [0, 2] {
+            assert!(arr.lines.iter().filter(|l| l.key == k).all(|l| {
+                let (a, b) = ends(&l.path.subpaths[0]);
+                a.distance(b) > 1.0 && l.path.subpaths[0].anchors.len() == 2
+            }));
+            assert_eq!(
+                arr.lines
+                    .iter()
+                    .filter(|l| l.key == k && [ends(&l.path.subpaths[0]).0, ends(&l.path.subpaths[0]).1].iter().any(|p| p.distance(at) < 1e-9))
+                    .count(),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn a_dense_hatch_at_exact_binary_steps_cuts_each_line_once_per_crossing() {
+        // Lines every 0.25 or 0.5 pt (exact in binary) cut a crossing line or a circle where two
+        // passes of each line met it a rounding error apart, adding a speck and a piece there.
+        let hatch = |n: i32, step: f64, f: &dyn Fn(f64) -> Shape| -> Vec<Shape> { (1..=n).map(|k| f(step * f64::from(k))).collect() };
+        // Horizontal lines across a diagonal: each in two pieces, the diagonal in n + 1.
+        let mut s = vec![line((-3.0, -2.0), (33.0, 31.0), 0)];
+        s.extend(hatch(119, 0.25, &|y| line((-5.0, y), (35.0, y), 0)));
+        let arr = shape_builder(&s, false);
+        assert_pieces_cut_out(&s, &arr);
+        assert_eq!(arr.lines.iter().filter(|l| l.key == 0).count(), 120);
+        assert!((1..=119).all(|k| arr.lines.iter().filter(|l| l.key == k).count() == 2));
+        assert_eq!(arr.lines.len(), 120 + 2 * 119);
+        // Sloping lines across a 45° one.
+        let mut s = vec![line((-3.0, -3.0), (33.0, 33.0), 0)];
+        s.extend(hatch(59, 0.5, &|v| line((v - 40.0, -5.0), (v + 40.0, 35.0), 0)));
+        let arr = shape_builder(&s, false);
+        assert_pieces_cut_out(&s, &arr);
+        assert_eq!(arr.lines.len(), 60 + 2 * 59, "{}", arr.lines.len());
+        // Vertical lines across a circle: n + 1 strips, each line in three pieces, the circle's
+        // outline in two per line.
+        let mut s = vec![Shape::new(shapes::ellipse(Rect::new(0.0, 0.0, 30.0, 30.0)), FillRule::NonZero, 0)];
+        s.extend(hatch(119, 0.25, &|x| line((x, -5.0), (x, 35.0), 0)));
+        let arr = shape_builder(&s, true);
+        assert_pieces_cut_out(&s, &arr);
+        assert_eq!(arr.regions.len(), 120);
+        assert!(arr.regions.iter().all(|r| r.sources == [0]));
+        assert!((1..=119).all(|k| arr.lines.iter().filter(|l| l.key == k).count() == 3));
+        assert_eq!(arr.lines.len(), 3 * 119);
+        assert_eq!(arr.edges.len(), 2 * 119);
     }
 
     fn poly(pts: &[(f64, f64)], closed: bool) -> SubPath {
