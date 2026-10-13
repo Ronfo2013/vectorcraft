@@ -634,14 +634,28 @@ pub(crate) fn map(shapes: &[Shape]) -> Option<Map> {
     // found at pins its position down least) a cut can slide further, here up to a small fraction
     // of the precision results are tidied to, below which no edge is drawn anyway.
     let (stub_y, stub_x) = (4.0 * eps, (DEFAULT_PRECISION / 16.0).max(4.0 * eps));
+    // A vertex's cluster stays within those bounds as a whole: a run of short, nearly level
+    // segments (a finely flattened or traced path) is real geometry, not one stub after another,
+    // so stubs chained along it must not pull a whole stretch of it into one vertex.
     let mut parent: Vec<usize> = (0..points.len()).collect();
+    let mut extent: Vec<kurbo::Rect> = points.iter().map(|&p| kurbo::Rect::from_points(p, p)).collect();
     for (segs, [v0, v1]) in &raw {
         let Some(&p0) = points.get(*v0) else { continue };
-        if segs.iter().flat_map(|s| [s.c.p1, s.c.p2, s.c.p3]).all(|p| (p.y - p0.y).abs() <= stub_y && (p.x - p0.x).abs() <= stub_x) {
-            let (a, b) = (find(&mut parent, *v0), find(&mut parent, *v1));
-            if let Some(p) = parent.get_mut(a.max(b)) {
-                *p = a.min(b);
-            }
+        if !segs.iter().flat_map(|s| [s.c.p1, s.c.p2, s.c.p3]).all(|p| (p.y - p0.y).abs() <= stub_y && (p.x - p0.x).abs() <= stub_x) {
+            continue;
+        }
+        let (a, b) = (find(&mut parent, *v0), find(&mut parent, *v1));
+        let (Some(&ra), Some(&rb)) = (extent.get(a), extent.get(b)) else { continue };
+        let both = ra.union(rb);
+        if a == b || both.width() > stub_x || both.height() > stub_y {
+            continue;
+        }
+        let (root, child) = (a.min(b), a.max(b));
+        if let Some(p) = parent.get_mut(child) {
+            *p = root;
+        }
+        if let Some(r) = extent.get_mut(root) {
+            *r = both;
         }
     }
     let mut edges: Vec<Edge> = Vec::new();
@@ -1351,6 +1365,29 @@ mod tests {
                 2
             );
         }
+    }
+
+    #[test]
+    fn a_run_of_tiny_level_segments_is_not_contracted_as_stubs() {
+        // 2000 segments of 1e-4 (0.2 pt in all), nearly level: each one alone is as short as a
+        // stub the sweep leaves between two cuts, but chained they are real geometry, and the
+        // stub contraction must not pull them into one vertex.
+        let pts: Vec<Point> = (0..=2000).map(|k| Point::new(f64::from(k) * 1e-4, f64::from(k) * 1e-8)).collect();
+        let run = Shape::new(PathData::single(SubPath::polyline(&pts, false)), FillRule::NonZero, 0);
+        let whole = run.path.length();
+        let s = [run, line((0.1003, -1.0), (0.1003, 1.0), 0)];
+        let arr = shape_builder(&s, false);
+        let pieces: Vec<&Shape> = arr.lines.iter().filter(|l| l.key == 0).collect();
+        assert_eq!(pieces.len(), 2, "cut once by the line: {}", pieces.len());
+        let total: f64 = pieces.iter().map(|l| l.path.length()).sum();
+        // Where the line crosses, one segment may be taken for a stub (it is as short as one),
+        // moving the cut by less than a stub's reach; the rest of the run stays.
+        assert!((total - whole).abs() <= DEFAULT_PRECISION / 16.0, "{total} of {whole}");
+        for l in &pieces {
+            let (a, b) = ends(&l.path.subpaths[0]);
+            assert!(a.distance(b) > 0.09, "a piece collapsed: {a:?} {b:?}");
+        }
+        assert_eq!(arr.lines.iter().filter(|l| l.key == 1).count(), 2);
     }
 
     #[test]
