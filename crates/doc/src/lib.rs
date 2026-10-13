@@ -21,6 +21,7 @@ pub mod live;
 pub mod marks;
 pub mod metadata;
 pub mod node;
+mod node_de;
 pub mod orient;
 pub mod overprint;
 pub mod pattern;

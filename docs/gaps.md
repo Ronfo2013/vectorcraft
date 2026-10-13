@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (G11: Shape Builder pieces: a line's two passes cut a rounding error apart no longer leave specks, double pieces or pieces keyed by the wrong path (dense hatches, the proptest's case); G4: Optical Margin Alignment (Type menu) and Roman Hanging Punctuation (Paragraph panel menu) act in layout, `type.opticalMarginAlignment`, `text.romanHangingPunctuation`; G4: Paragraph panel menu › Hyphenation… and Justification… options act in composition (`text.hyphenation`, `text.justification`); G12: Constrain Angle, Corner Radius, Appearance of Black and Real-time Drawing and Editing act (#394, first batch); G11: PDF text opens where the file draws it, #722: kerning or none as the file set it, word and character spacing and TJ adjustments kept per character, text rise as baseline shift, narrow vertical glyphs centred on their column, justified text boxes back as area type; G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (G11: Shape Builder pieces: a line's two passes cut a rounding error apart no longer leave specks, double pieces or pieces keyed by the wrong path (dense hatches, the proptest's case); G11: Shape Builder pieces: a line's two passes cut a rounding error apart no longer leave specks, double pieces or pieces keyed by the wrong path (dense hatches, the proptest's case); G4: Optical Margin Alignment (Type menu) and Roman Hanging Punctuation (Paragraph panel menu) act in layout, `type.opticalMarginAlignment`, `text.romanHangingPunctuation`; G4: Paragraph panel menu › Hyphenation… and Justification… options act in composition (`text.hyphenation`, `text.justification`); G12: Constrain Angle, Corner Radius, Appearance of Black and Real-time Drawing and Editing act (#394, first batch); G11: PDF text opens where the file draws it, #722: kerning or none as the file set it, word and character spacing and TJ adjustments kept per character, text rise as baseline shift, narrow vertical glyphs centred on their column, justified text boxes back as area type; G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every known shortfall against Illustrator, one entry each, **ranked by how much it stops a professional from
 switching**. This is the work list: unless you were given a task, pick the highest-ranked gap you can make
@@ -238,10 +238,21 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 ## G15 Performance budgets and a GPU renderer
 
-- **Missing:** an idle-machine run of `vectorcraft-cli perf` (last: 2026-10-01 on a loaded machine, 290 ms for
-  a 50k-path fit against a 16 ms budget), fixes for any budget missed, dirty-region rendering, the GPU backend
-  spike (M5).
-- **Estimate:** 15–25 h (the budget run and fixes block beta).
+- **Measured** (2026-10-13, three runs of `vectorcraft-cli perf` (50,000 paths, 4 cores, load average 5.7–7.7 from parallel builds, so wall-clock times are inflated), budget in brackets): render fit page 380–437 ms (100), background
+  refresh after a pan 378–418 ms (100), 400% zoom 119–128 ms (16); open `.vectorcraft` 278–305 ms (300; 535–570 ms
+  before the fix below); save 108–122 ms (300); export SVG 358–360 ms (500); hit test 1.2 ms (2); Pathfinder Unite
+  of 1,000 paths 73–75 ms (150); handle and segment drags on a 5,000-anchor path 4.6–5.3 ms (8).
+- **Fixed:** opening a file read every object kind twice per level of nesting: serde's reader for the internally
+  tagged `NodeKind` copies the whole object (a layer's or group's art included) into an in-memory tree before
+  reading it. It is now read tag first, straight from the file (`crates/doc/src/node_de.rs`), falling back to the
+  old path when the tag isn't first: the document parse of the 50k-path file went from ~410 to ~200 ms (measured,
+  same load).
+- **Missing:** an idle-machine run; the render budgets, missed 4× (fit, pan) and 8× (400% zoom) even allowing for
+  the load. Instrumented at 400% zoom, 3,900 of the 50,000 paths are visible and the frame is ~10 ms of encoding,
+  ~25 ms of vello_cpu's coarse pass and ~30 ms of its fine pass over 5.2 M pixels: rasterization-bound, so the fix
+  is dirty-region rendering and the GPU backend spike (M5), not culling. Appearances, paints and colours are
+  still read through serde's buffered tags (~120 ms of the open).
+- **Estimate:** 15–25 h (the render budgets block beta).
 
 ## G16 Localization: the five missing key languages
 
@@ -275,6 +286,7 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | G15: budget run recorded (loaded machine, measured): open `.vectorcraft` 535–570 → 278–305 ms (object kinds read without buffering); render fit/pan (380–437 ms vs 100) and 400% zoom (119–128 ms vs 16) still missed, rasterization-bound; estimate unchanged |
 | 2026-10-13 | minor | G11: Shape Builder pieces: the planar map contracts the stubs the sweep left between two cuts of a line's passes a rounding error apart, so dense hatches at exact binary steps no longer add a speck and a piece per crossing and no piece is keyed by a path it isn't cut out of (the `pieces_cut_out_of_their_inputs` proptest's case); estimate unchanged, #937 open |
 | 2026-10-13 | minor | G4: Optical Margin Alignment and Roman Hanging Punctuation done (layout, commands, menus, file format); estimate 30–43 h → 28–40 h (type core 10–15 h → 8–12 h) |
 | 2026-10-12 | minor | G12: #394 first batch review fixes: Save for Web follows Appearance of Black, Real-time Drawing off holds only canvas drags, exact whole and quarter turns of Constrain Angle, pattern fills in transparent CMYK documents no longer crash |
