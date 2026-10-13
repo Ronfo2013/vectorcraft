@@ -114,6 +114,16 @@ pub(crate) fn reflow(before: &Document, doc: &mut Document) {
                     t.area.fit = vectorcraft_doc::AreaFit::None;
                 }
             }
+            // Optical Margin Alignment is the story's: every frame takes the first frame's.
+            let optical = live.first().and_then(|id| text_of(doc, *id)).is_some_and(|t| t.optical_margin);
+            for id in &live {
+                if text_of(doc, *id).is_some_and(|t| t.optical_margin != optical)
+                    && let Some(NodeKind::Text(t)) = doc.node_mut(*id).map(|n| &mut n.kind)
+                {
+                    t.optical_margin = optical;
+                    refresh_bounds(t);
+                }
+            }
         }
         let frames: Vec<TextObject> = live.iter().filter_map(|id| text_of(doc, *id).cloned()).collect();
         let refs: Vec<&TextObject> = frames.iter().collect();

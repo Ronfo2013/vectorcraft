@@ -361,6 +361,11 @@ pub struct ParaStyle {
     /// Paragraph panel menu › Justification…: word spacing, letter spacing, glyph scaling, auto
     /// leading and single word justification.
     pub justification: Justification,
+    /// Paragraph panel menu › Roman Hanging Punctuation: quotation marks, hyphens, full stops and
+    /// commas at either edge of a line stand wholly outside it, asterisks, tildes, ellipses, dashes,
+    /// colons and semicolons half outside (`vectorcraft_text::hang`). Off in new type and in
+    /// documents from before it.
+    pub roman_hanging: bool,
 }
 
 /// [`ParaStyle`] as saved. [`Justify::Auto`] is written as the alignment it has in the paragraph
@@ -404,6 +409,8 @@ struct ParaStyleFile {
     hyphenation: Hyphenation,
     #[serde(default, skip_serializing_if = "crate::skip::is_default")]
     justification: Justification,
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    roman_hanging: bool,
 }
 
 impl From<ParaStyle> for ParaStyleFile {
@@ -431,6 +438,7 @@ impl From<ParaStyle> for ParaStyleFile {
             kinsoku,
             hyphenation,
             justification,
+            roman_hanging,
             ..
         } = p;
         Self {
@@ -452,6 +460,7 @@ impl From<ParaStyle> for ParaStyleFile {
             kinsoku,
             hyphenation,
             justification,
+            roman_hanging,
         }
     }
 }
@@ -476,6 +485,7 @@ impl From<ParaStyleFile> for ParaStyle {
             kinsoku,
             hyphenation,
             justification,
+            roman_hanging,
             ..
         } = f;
         Self {
@@ -496,6 +506,7 @@ impl From<ParaStyleFile> for ParaStyle {
             kinsoku,
             hyphenation: hyphenation.clamped(),
             justification: justification.clamped(),
+            roman_hanging,
         }
     }
 }
@@ -1167,6 +1178,12 @@ pub struct TextObject {
     /// them up round the inside.
     #[serde(default, rename = "pathSpacing", skip_serializing_if = "crate::skip::is_default")]
     pub path_spacing: f64,
+    /// Type › Optical Margin Alignment, for the whole story: punctuation and the edges of letters
+    /// such as A, T, V, W and Y stand partly outside the left and right edges of each line, so the
+    /// edges look straight (`vectorcraft_text::hang`). Off in new type and in documents from
+    /// before it.
+    #[serde(default, rename = "opticalMargin", skip_serializing_if = "crate::skip::is_default")]
+    pub optical_margin: bool,
     /// Wrap objects above this area type, resolved by the engine after each edit (text space).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub wrap: Vec<WrapShape>,
@@ -1234,6 +1251,7 @@ impl TextObject {
             path_effect: PathEffect::default(),
             path_align: PathAlign::default(),
             path_spacing: 0.0,
+            optical_margin: false,
             wrap: Vec::new(),
             cached_bounds: None,
             cached_baselines: Vec::new(),

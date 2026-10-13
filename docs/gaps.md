@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (G4: Paragraph panel menu › Hyphenation… and Justification… options act in composition (`text.hyphenation`, `text.justification`); G12: Constrain Angle, Corner Radius, Appearance of Black and Real-time Drawing and Editing act (#394, first batch); G11: PDF text opens where the file draws it, #722: kerning or none as the file set it, word and character spacing and TJ adjustments kept per character, text rise as baseline shift, narrow vertical glyphs centred on their column, justified text boxes back as area type; G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (G4: Optical Margin Alignment (Type menu) and Roman Hanging Punctuation (Paragraph panel menu) act in layout, `type.opticalMarginAlignment`, `text.romanHangingPunctuation`; G4: Paragraph panel menu › Hyphenation… and Justification… options act in composition (`text.hyphenation`, `text.justification`); G12: Constrain Angle, Corner Radius, Appearance of Black and Real-time Drawing and Editing act (#394, first batch); G11: PDF text opens where the file draws it, #722: kerning or none as the file set it, word and character spacing and TJ adjustments kept per character, text rise as baseline shift, narrow vertical glyphs centred on their column, justified text boxes back as area type; G11: the Transform effect's Transform Objects, Transform Patterns and Scale Strokes & Effects options added and its Options checkboxes drawn, #885; G9: gradient meshes read from `.ai` editing data, the user's file opens whole; G11: bezier drag previews follow the pointer back into the window and to the release, #834; SVG files keep the document's units, #864; G9: a 2026 `.ai` opens from its editing data (unknown operators skipped, gradient meshes left out with a loss note, every artboard compared), layer structure audited and tested, per-page PDF layers merged, unreadable private data named; G1: the shortcut reference's selection and shape-editing modifier rows checked and fixed; G11: Shape Builder cuts art of thousands of segments again, the reproduced case of #937; G4: proportional vertical metrics done, #966; G11: Shape Builder merge seams on grids of lines fixed, #893; scaled text controls corrected, #1034; group font-size preservation deferred) · **Target:** Adobe Illustrator 2026 (30.x)
 
 Every known shortfall against Illustrator, one entry each, **ranked by how much it stops a professional from
 switching**. This is the work list: unless you were given a task, pick the highest-ranked gap you can make
@@ -148,14 +148,15 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 ## G4 Advanced type
 
-- **Missing:** Optical Margin Alignment (type core; Hyphenation… and Justification… options done 2026-10-13,
-  not yet compared side by side); CJK vertical
+- **Missing:** type core polish (Hyphenation… and Justification… options, Optical Margin Alignment and Roman
+  Hanging Punctuation done 2026-10-13, not yet compared side by side; hanging in right-to-left text, vertical type and type on
+  a path); CJK vertical
   composition (ruby, mojikumi sets and dialog, kinsoku settings #633, manual tate-chu-yoko), Middle Eastern
   features beyond bidi, variable font axes, spell check with an open dictionary,
   Touch Type, Retype, Snap to Glyph; optional preservation of font sizes during group scaling (#1034 enhancement).
   Itemized in [type-parity.md](type-parity.md).
 - **Impact:** professional typography and Japanese/Chinese publishing.
-- **Estimate:** 30–43 h (type core 10–15 h blocks beta).
+- **Estimate:** 28–40 h (type core 8–12 h blocks beta).
 
 ## G12 Preferences and panels that don't act yet
 
@@ -267,6 +268,7 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | G4: Optical Margin Alignment and Roman Hanging Punctuation done (layout, commands, menus, file format); estimate 30–43 h → 28–40 h (type core 10–15 h → 8–12 h) |
 | 2026-10-12 | minor | G12: #394 first batch review fixes: Save for Web follows Appearance of Black, Real-time Drawing off holds only canvas drags, exact whole and quarter turns of Constrain Angle, pattern fills in transparent CMYK documents no longer crash |
 | 2026-10-13 | minor | G4: Hyphenation… and Justification… options done (line breaker, justified lines, Auto Leading, commands, Paragraph panel dialogs); estimate 34–47 h → 30–43 h (type core 14–19 h → 10–15 h) |
 | 2026-10-12 | minor | G12: #394 first batch: Constrain Angle (arrow keys, Shift drags, drawn boxes), Corner Radius (Rounded Rectangle tool and dialog), Appearance of Black (canvas and raster exports), Real-time Drawing and Editing; ~12 options left; estimate 13–20 h → 11–17 h |

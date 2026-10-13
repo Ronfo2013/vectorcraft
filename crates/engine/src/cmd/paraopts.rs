@@ -4,18 +4,25 @@
 //! letterspacing in justified text",
 //! <https://helpx.adobe.com/illustrator/desktop/design-with-text/edit-format-text/adjust-word-and-letterspacing-in-justified-text.html>).
 //!
+//! Also Paragraph panel menu › Roman Hanging Punctuation (per paragraph) and Type › Optical Margin
+//! Alignment (per story), helpx "Formatting paragraphs" › Hanging punctuation,
+//! <https://helpx.adobe.com/illustrator/using/formatting-paragraphs.html>: toggles, `query: true`
+//! asks (see `vectorcraft_text::hang` for what hangs and how far).
+//!
 //! Each command with no option queries the first target paragraph's values (the dialog's fields);
 //! with options it sets them on the paragraphs of the selected type (with `start`/`end`: those the
 //! range touches), one undo step.
 
 use serde_json::{Map, Value, json};
-use vectorcraft_doc::{Hyphenation, Justification, NodeKind, ParaStyle, SingleWordJustify, SpacingRange};
+use vectorcraft_doc::{Hyphenation, Justification, NodeId, NodeKind, ParaStyle, SingleWordJustify, SpacingRange};
 
 use super::typecmd::{TextRange, para_span, refresh_bounds, text_targets};
 use super::*;
 
 const HYPHENATION: &str = "text.hyphenation";
 const JUSTIFICATION: &str = "text.justification";
+const ROMAN_HANGING: &str = "text.romanHangingPunctuation";
+const OPTICAL_MARGIN: &str = "type.opticalMarginAlignment";
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -36,6 +43,24 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids?|id?, start?: byte, end?: byte, wordSpacingMin?, wordSpacingDesired?, wordSpacingMax?: % of a space (0–1000), letterSpacingMin?, letterSpacingDesired?, letterSpacingMax?: % of a space added between letters (-100–500), glyphScalingMin?, glyphScalingDesired?, glyphScalingMax?: % of the glyphs' width (50–200), autoLeading?: % of the type size (0–500; leading of characters whose leading is Auto), singleWordJustification?: fullJustify|alignLeft|alignCenter|alignRight (a justified line holding one word)} set the paragraphs' Justification options: Desired spacing applies to every line, justified lines stretch or shrink within Minimum and Maximum (word spacing first, then letter spacing, then glyph scaling); values given together must be in order (Minimum ≤ Desired ≤ Maximum), and one given alone moves the paragraph's others to keep that order; no option → the first target paragraph's values (singleWordJustification of a paragraph from before the option: how it is set, fullJustify in Justify All Lines, else alignLeft)",
             has_doc,
             justification
+        ),
+        cmd!(
+            "text.romanHangingPunctuation",
+            "Roman Hanging Punctuation",
+            [],
+            None,
+            "{ids?|id?, start?: byte, end?: byte, on?: bool, query?: bool} Paragraph panel menu › Roman Hanging Punctuation, per paragraph: quotation marks, hyphens, full stops and commas at either edge of a line stand wholly outside it, asterisks, tildes, ellipses, en and em dashes, colons and semicolons half outside; justified lines fill to the hung edges (horizontal area and point type; not in vertical type, and only characters set left to right). `on` sets it on the target paragraphs (with `start`/`end`: those the range touches), without it toggles (on unless every target paragraph has it), one undo step (none when nothing changes) → {ids, on}; `query: true` → the first target paragraph's {on}",
+            has_doc,
+            roman_hanging
+        ),
+        cmd!(
+            "type.opticalMarginAlignment",
+            "Optical Margin Alignment",
+            [],
+            None,
+            "{ids?|id?, on?: bool, query?: bool} Type › Optical Margin Alignment, for every paragraph of the selected type objects (and the frames threaded with them): punctuation (as Roman Hanging Punctuation) and the edges of letters such as A, T, V, W and Y stand partly outside both edges of each line so they look straight; justified lines fill to the hung edges (horizontal type only, characters set left to right). `on` sets it, without it toggles (on unless every target has it), one undo step (none when nothing changes) → {ids, on}; `query: true` → {on (the first target's), mixed, ids}",
+            has_doc,
+            optical_margin
         ),
     ]
 }
@@ -286,4 +311,108 @@ fn justification(s: &mut Session, p: &Value) -> Result<Value> {
         }
         *j = j.clamped();
     })
+}
+
+/// The target text objects of `type.opticalMarginAlignment`, with every frame threaded with them:
+/// the option is the story's.
+fn story_targets(s: &Session, p: &Value, cmd: &str) -> Result<Vec<NodeId>> {
+    let mut ids = text_targets(s, p, cmd)?;
+    let st = s.doc()?;
+    for thread in &st.doc.text_threads {
+        if thread.iter().any(|id| ids.contains(id)) {
+            for id in thread {
+                if !ids.contains(id) && matches!(st.doc.node(*id).map(|n| &n.kind), Some(NodeKind::Text(_))) {
+                    ids.push(*id);
+                }
+            }
+        }
+    }
+    Ok(ids)
+}
+
+/// `on` and `query` of a toggle command: Some(true/false) sets, None toggles; `query` alone asks.
+fn toggle_params(p: &Value, cmd: &str, extra: &[&str]) -> Result<(Option<bool>, bool)> {
+    let keys: Vec<&str> = ["on", "query"].into_iter().chain(extra.iter().copied()).collect();
+    reject_unknown(p, &keys, cmd)?;
+    let on = flag(p, "on", cmd)?;
+    let query = flag(p, "query", cmd)?.unwrap_or(false);
+    if query && on.is_some() {
+        return Err(bad(cmd, "`query` takes no `on`"));
+    }
+    Ok((on, query))
+}
+
+fn optical_margin(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = OPTICAL_MARGIN;
+    let (on, query) = toggle_params(p, C, &[])?;
+    let ids = story_targets(s, p, C)?;
+    let states: Vec<bool> = {
+        let st = s.doc()?;
+        ids.iter()
+            .filter_map(|id| match st.doc.node(*id).map(|n| &n.kind) {
+                Some(NodeKind::Text(t)) => Some(t.optical_margin),
+                _ => None,
+            })
+            .collect()
+    };
+    let ids_json = ids.iter().map(|i| i.0).collect::<Vec<_>>();
+    if query {
+        return Ok(
+            json!({ "on": states.first().copied().unwrap_or(false), "mixed": states.iter().any(|&v| v != states.first().copied().unwrap_or(false)), "ids": ids_json }),
+        );
+    }
+    // Toggled: on unless every target already has it.
+    let on = on.unwrap_or_else(|| !states.iter().all(|&v| v));
+    if states.iter().all(|&v| v == on) {
+        // Nothing to change: no undo step.
+        return Ok(json!({ "on": on, "ids": ids_json }));
+    }
+    s.edit("Optical Margin Alignment", |d, _| {
+        for id in &ids {
+            if let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind)
+                && t.optical_margin != on
+            {
+                t.optical_margin = on;
+                refresh_bounds(t);
+            }
+        }
+        Ok(())
+    })?;
+    Ok(json!({ "on": on, "ids": ids_json }))
+}
+
+fn roman_hanging(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = ROMAN_HANGING;
+    let (on, query) = toggle_params(p, C, &[])?;
+    if query {
+        let para = first_para(s, p, C)?;
+        return Ok(json!({ "on": para.roman_hanging }));
+    }
+    // Every target paragraph's state.
+    let ids = text_targets(s, p, C)?;
+    let states: Vec<bool> = {
+        let range = TextRange::parse(p, C)?;
+        let st = s.doc()?;
+        ids.iter()
+            .filter_map(|id| match st.doc.node(*id).map(|n| &n.kind) {
+                Some(NodeKind::Text(t)) => Some(t),
+                _ => None,
+            })
+            .flat_map(|t| {
+                let span = para_span(range, t).unwrap_or(0..t.paragraph_count());
+                span.map(|k| t.para_at(k).roman_hanging).collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    // Toggled: on unless every target paragraph already has it.
+    let on = on.unwrap_or_else(|| !states.iter().all(|&v| v));
+    if states.iter().all(|&v| v == on) {
+        // Nothing to change: no undo step.
+        return Ok(json!({ "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>(), "on": on }));
+    }
+    let mut out = edit_paras(s, p, C, "Roman Hanging Punctuation", |para| para.roman_hanging = on)?;
+    if let Some(o) = out.as_object_mut() {
+        o.insert("on".into(), json!(on));
+    }
+    Ok(out)
 }
