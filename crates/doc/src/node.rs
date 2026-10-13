@@ -394,7 +394,9 @@ pub struct ImageObject {
     pub placement: crate::links::PlacementOptions,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Read by the `Deserialize` impl in `node_de` (tag first, without buffering): keep its
+/// `NodeKindWire` in step with the field attributes here.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum NodeKind {
     /// A top-level layer or sublayer.
