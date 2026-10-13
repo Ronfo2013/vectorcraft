@@ -249,3 +249,27 @@ fn paragraphs_aligned_differently_keep_their_alignment() {
         assert_similar(&render_artboard(&d), &render_artboard(&back), 40.0, 0.01);
     }
 }
+
+/// A right-aligned line with Roman Hanging Punctuation: its full stop hangs past the frame's right
+/// edge, and the SVG anchors the line's end there (the frame edge plus the stop's advance), so a
+/// viewer draws it where the canvas does.
+#[test]
+fn a_hung_right_aligned_line_ends_past_the_frame_in_svg() {
+    let mut t = TextObject::point(Point::new(20.0, 20.0), "Words end.", style(12.0));
+    t.kind = TextKind::Area { frame: shapes::rectangle(Rect::new(0.0, 0.0, 200.0, 160.0)) };
+    t.para.justify = Justify::Right;
+    t.para.roman_hanging = true;
+    let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &t);
+    let mut d = Document::new(300.0, 200.0);
+    let n = Node::new(d.alloc_id(), NodeKind::Text(Box::new(t)));
+    let l = d.layers[0].id;
+    d.insert(Some(l), 0, n).unwrap();
+    let stop = lay.glyphs.last().unwrap();
+    assert!(stop.advance > 0.0);
+    assert!((stop.origin.x + stop.advance - (200.0 + stop.advance)).abs() < 1e-6, "{:?}", stop.origin);
+    let svg = export(&d, &ExportOptions::default());
+    assert!(svg.contains("text-anchor=\"end\""), "{svg}");
+    let tag = &svg[svg.find("<text").unwrap()..];
+    let x = attr(&tag[..tag.find('>').unwrap()], "x").unwrap();
+    assert!((x - (200.0 + stop.advance)).abs() < 0.01, "anchored at {x}: {svg}");
+}

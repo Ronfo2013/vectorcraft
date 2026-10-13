@@ -46,14 +46,35 @@ pub(crate) fn align(app: &mut VectorcraftApp, justify: &str) -> Result<Value, St
     Ok(Value::Null)
 }
 
-fn para_cmd(app: &mut VectorcraftApp, cmd: &str, mut p: Value) {
+fn para_cmd(app: &mut VectorcraftApp, cmd: &str, p: Value) {
+    let p = para_params(app, p);
+    app.run(cmd, p).ok();
+}
+
+/// `p` aimed at the paragraphs the Type tool's selection or caret touches (else the selected type).
+fn para_params(app: &mut VectorcraftApp, mut p: Value) -> Value {
     if let Some((id, a, b)) = super::character::text_editing(app) {
         super::character::end_typing(app);
         p["ids"] = json!([id.0]);
         p["start"] = json!(a);
         p["end"] = json!(b);
     }
-    app.run(cmd, p).ok();
+    p
+}
+
+/// Paragraph panel menu › Reset Panel: the panel's defaults on the target paragraphs, one undo
+/// step.
+fn reset_panel(app: &mut VectorcraftApp) {
+    let steps = [
+        ("text.setStyle", json!({"justify": "auto"})),
+        (
+            "text.setFormat",
+            json!({"leftIndent": 0, "rightIndent": 0, "firstLineIndent": 0, "spaceBefore": 0, "spaceAfter": 0, "hyphenate": false, "direction": "auto", "leadingModel": "romanBaseline", "burasagari": "standard", "kinsoku": "hard", "composer": "everyLine"}),
+        ),
+        ("text.romanHangingPunctuation", json!({"on": false})),
+    ];
+    let commands: Vec<Value> = steps.into_iter().map(|(c, p)| json!({"command": c, "params": para_params(app, p)})).collect();
+    app.run("command.batch", json!({"label": "Reset Panel", "commands": commands})).ok();
 }
 
 /// Paragraph panel menu › Justification… or Hyphenation… (command `id`, `text.justification` or
@@ -222,7 +243,11 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
         set_pstate(ui.ctx(), "pa-hide-options", !hidden);
     }
     ui.separator();
-    menu_item(ui, tl!("Roman Hanging Punctuation"), false, false);
+    // Quotes, hyphens, full stops and commas at either edge of a line hang outside it.
+    let roman = style.as_ref().is_some_and(|(_, p)| p.roman_hanging);
+    if menu_item(ui, tl!("Roman Hanging Punctuation"), has, roman) {
+        para_cmd(app, "text.romanHangingPunctuation", json!({}));
+    }
     for (l, id) in [(tl!("Justification…"), "text.justification"), (tl!("Hyphenation…"), "text.hyphenation")] {
         if menu_item(ui, l, has, false)
             && let Err(e) = options_dialog(app, id)
@@ -270,11 +295,7 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     ui.separator();
     if menu_item(ui, tl!("Reset Panel"), has, false) {
-        para_cmd(app, "text.setStyle", json!({"justify": "auto"}));
-        format(
-            app,
-            json!({"leftIndent": 0, "rightIndent": 0, "firstLineIndent": 0, "spaceBefore": 0, "spaceAfter": 0, "hyphenate": false, "direction": "auto", "leadingModel": "romanBaseline", "burasagari": "standard", "kinsoku": "hard", "composer": "everyLine"}),
-        );
+        reset_panel(app);
     }
 }
 
@@ -314,5 +335,28 @@ mod tests {
         let without = tips(&mut app);
         app.session.prefs.show_indic_options = true;
         assert!(tips(&mut app) > without, "two more buttons");
+    }
+
+    /// Paragraph panel menu › Reset Panel puts alignment, indents and Roman Hanging Punctuation
+    /// back in one undo step.
+    #[test]
+    fn reset_panel_is_one_undo_step() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 400, "height": 200})).unwrap();
+        app.session
+            .execute("text.create", &json!({"x": 20, "y": 50, "text": "\u{201C}Quoted\u{201D}", "area": {"width": 200, "height": 100}}))
+            .unwrap();
+        app.session.execute("text.setStyle", &json!({"justify": "right"})).unwrap();
+        app.session.execute("text.setFormat", &json!({"leftIndent": 6})).unwrap();
+        app.session.execute("text.romanHangingPunctuation", &json!({"on": true})).unwrap();
+        let undo_len = |app: &VectorcraftApp| app.session.doc().unwrap().history.undo.len();
+        let n = undo_len(&app);
+        reset_panel(&mut app);
+        assert_eq!(undo_len(&app), n + 1);
+        let para = text_style(&app).unwrap().1;
+        assert_eq!((para.justify, para.left_indent, para.roman_hanging), (Justify::Auto, 0.0, false));
+        app.session.execute("edit.undo", &json!({})).unwrap();
+        let para = text_style(&app).unwrap().1;
+        assert_eq!((para.justify, para.left_indent, para.roman_hanging), (Justify::Right, 6.0, true));
     }
 }

@@ -1477,6 +1477,8 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         "type.orientation.vertical" | "type.orientation.horizontal" => {
             selected_text(false).is_some_and(|t| t.vertical == (id == "type.orientation.vertical"))
         }
+        // Type › Optical Margin Alignment of the selected type.
+        "type.opticalMarginAlignment" => selected_text(false).is_some_and(|t| t.optical_margin),
         "view.outline" => v.outline,
         "view.pixelPreview" => v.pixel_preview,
         "view.trimView" => v.trim_view,
@@ -2380,7 +2382,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                 cp("Smart Punctuation…", "type.smartPunctuation", json!({"quotes": true, "dashes": true, "ellipsis": true, "scope": "selection"})),
                 Sep,
                 c("Create Outlines", "type.createOutlines"),
-                todo("Optical Margin Alignment"),
+                c("Optical Margin Alignment", "type.opticalMarginAlignment"),
                 Sep,
                 c("Fill with Placeholder Text", "type.fillPlaceholder"),
                 c("Insert Inline Symbol", "text.insertInline"),

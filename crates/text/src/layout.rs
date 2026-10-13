@@ -12,6 +12,7 @@ use vectorcraft_geom::{ArcPath, PathData};
 
 use crate::composer::{Breakpoint, Params, compose};
 use crate::fontdb::FontDb;
+use crate::hang::{self, Edge};
 use crate::hyphen::hyphen_points_with;
 use crate::justify;
 use crate::shape::{
@@ -1067,11 +1068,61 @@ struct LineRules<'a> {
     zone: f64,
     burasagari: Burasagari,
     kinsoku: Kinsoku,
+    /// Hanging punctuation and optical margins: the line's last character may stand partly
+    /// outside its end.
+    hang: Hang,
 }
 
 impl<'a> LineRules<'a> {
     fn of(para: &'a ParaStyle) -> Self {
-        Self { hyphenate: para.hyphenate, hyphenation: &para.hyphenation, zone: 0.0, burasagari: para.burasagari, kinsoku: para.kinsoku }
+        Self {
+            hyphenate: para.hyphenate,
+            hyphenation: &para.hyphenation,
+            zone: 0.0,
+            burasagari: para.burasagari,
+            kinsoku: para.kinsoku,
+            hang: Hang::default(),
+        }
+    }
+}
+
+/// Roman Hanging Punctuation (the paragraph's) and Optical Margin Alignment (the story's): how far
+/// the characters at either end of a line stand outside it ([`crate::hang`]). Right-to-left
+/// paragraphs and vertical type don't hang, nor does a character set right to left (or inside a
+/// right-to-left run) in a left-to-right paragraph: the bidi reordering may move it off the edge.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Hang {
+    roman: bool,
+    optical: bool,
+}
+
+impl Hang {
+    fn of(t: &TextObject, para: &ParaStyle, rtl: bool, vertical: bool) -> Self {
+        if rtl || vertical { Self::default() } else { Self { roman: para.roman_hanging, optical: t.optical_margin } }
+    }
+
+    fn active(self) -> bool {
+        self.roman || self.optical
+    }
+
+    /// Points glyph `g` hangs outside the line's `edge`: its ratio of the advance it takes on the
+    /// line (so a character hanging wholly outside the start leaves the next one on the edge).
+    fn amount(self, g: &SGlyph, edge: Edge) -> f64 {
+        self.amount_of(g, edge, g.adv)
+    }
+
+    /// [`Hang::amount`] of glyph `g` taking `adv` on the line. Only a glyph at the paragraph's
+    /// own (left-to-right) embedding level hangs: one inside a right-to-left run isn't at the
+    /// line's visual edge.
+    fn amount_of(self, g: &SGlyph, edge: Edge, adv: f64) -> f64 {
+        if !self.active() || g.inline.is_some() || g.tcy.is_some() || g.is_space() || g.level.number() != 0 {
+            return 0.0;
+        }
+        let r = hang::ratio(g.ch, edge, self.roman, self.optical);
+        if r <= 0.0 {
+            return 0.0;
+        }
+        if adv.is_finite() && adv > 0.0 { r * adv } else { 0.0 }
     }
 }
 
@@ -1080,7 +1131,7 @@ impl<'a> LineRules<'a> {
 /// With a Hyphenation Zone, a word that overflows is hyphenated only when the line couldn't end
 /// before it outside the zone (the last `zone` points of the line).
 fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, rules: &LineRules<'_>) -> (usize, bool) {
-    let LineRules { hyphenate, hyphenation, zone, burasagari, kinsoku } = *rules;
+    let LineRules { hyphenate, hyphenation, zone, burasagari, kinsoku, hang } = *rules;
     if !width.is_finite() {
         return (g.len(), false);
     }
@@ -1094,7 +1145,14 @@ fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, rules: &LineRules<
             cluster_end += 1;
         }
         let cluster_width: f64 = g[j..cluster_end].iter().map(|glyph| glyph.adv).sum();
-        if j > i && !gl.is_space() && x + cluster_width > width + EPS {
+        // Hanging punctuation: a cluster the line may end after fits when its last character
+        // hanging outside the end does.
+        let hung = || {
+            let last = &g[cluster_end - 1];
+            let may_end = g.get(cluster_end).is_none_or(SGlyph::is_space) || (last.break_after() && kinsoku_allows(g, cluster_end - 1, kinsoku));
+            may_end && x + cluster_width - hang.amount(last, Edge::End) <= width + EPS
+        };
+        if j > i && !gl.is_space() && x + cluster_width > width + EPS && !(hang.active() && hung()) {
             // It ends the line with the spaces after it.
             if burasagari != Burasagari::None && hangs(gl) && kinsoku_allows(g, cluster_end - 1, kinsoku) {
                 let mut end = cluster_end;
@@ -1109,7 +1167,8 @@ fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, rules: &LineRules<
         let last = &g[cluster_end - 1];
         if last.break_after() && kinsoku_allows(g, cluster_end - 1, kinsoku) {
             if last.is_soft_hyphen() {
-                if x + hyphen_glyph(last).adv <= width + EPS {
+                let h = hyphen_glyph(last);
+                if x + h.adv - hang.amount(&h, Edge::End) <= width + EPS {
                     last_break = Some((cluster_end, true));
                 }
             } else {
@@ -1141,7 +1200,8 @@ fn break_line(text: &str, g: &[SGlyph], i: usize, width: f64, rules: &LineRules<
             hyphen_breaks(text, g, word_start, we, hyphenation).into_iter().filter(|&k| k > 0 && kinsoku_allows(g, k - 1, kinsoku)).collect();
         for &k in pts.iter().rev() {
             if k <= j && k > i {
-                let w = x_ws + g[word_start..k].iter().map(|g| g.adv).sum::<f64>() + hyphen_glyph(&g[k - 1]).adv;
+                let h = hyphen_glyph(&g[k - 1]);
+                let w = x_ws + g[word_start..k].iter().map(|g| g.adv).sum::<f64>() + h.adv - hang.amount(&h, Edge::End);
                 if w <= width + EPS {
                     return (k, true);
                 }
@@ -1188,7 +1248,7 @@ mod wrapping_tests {
     use std::sync::Arc;
 
     fn test_rules(h: &Hyphenation) -> LineRules<'_> {
-        LineRules { hyphenate: false, hyphenation: h, zone: 0.0, burasagari: Burasagari::None, kinsoku: Kinsoku::Hard }
+        LineRules { hyphenate: false, hyphenation: h, zone: 0.0, burasagari: Burasagari::None, kinsoku: Kinsoku::Hard, hang: Hang::default() }
     }
 
     fn synthetic_glyphs(specs: &[(usize, usize, f64, char)]) -> Vec<SGlyph> {
@@ -1418,7 +1478,8 @@ const MAX_COMPOSE_GLYPHS: usize = 200_000;
 /// Every-line composition of paragraph glyphs `sg` if applicable (area text with uniform line
 /// metrics, justified or ragged); `None` falls back to the greedy single-line composer.
 /// `justification` is the paragraph's (the defaults in vertical type), `units` its glyphs'
-/// letter-spacing units ([`justify::letter_units`]).
+/// letter-spacing units ([`justify::letter_units`]), `hang` what hangs at the line edges.
+#[allow(clippy::too_many_arguments)]
 fn compose_para(
     cx: &Ctx<'_>,
     sg: &[SGlyph],
@@ -1427,6 +1488,7 @@ fn compose_para(
     units: &[f64],
     pen: &Pen<'_>,
     rtl: bool,
+    hang: Hang,
 ) -> Option<Vec<(usize, bool)>> {
     let ragged = matches!(para.justify, Justify::Auto | Justify::Left | Justify::Center | Justify::Right);
     let composer = cx.opts.composer.unwrap_or(para.composer);
@@ -1472,11 +1534,21 @@ fn compose_para(
     let (strict, loose) = if ragged { (1.0, f64::INFINITY) } else { (1.0, 4.0) };
     // The same rule as the line loop below: an opening bracket starting a wrapped line gives up
     // the space before it.
+    // Hanging punctuation and optical margins: what the line's first character hangs outside its
+    // start, and its last (or the hyphen) outside its end, is room on the line.
     let start_credit = |i: usize| {
-        let flush = !rtl && para.mojikumi == Mojikumi::LineEndHalf;
-        sg.get(i).filter(|g| flush && g.lead <= 0.0).and_then(|g| punct_half(g, Punct::Opening)).unwrap_or(0.0)
+        let flush = i > 0 && !rtl && para.mojikumi == Mojikumi::LineEndHalf;
+        let mojikumi = sg.get(i).filter(|g| flush && g.lead <= 0.0).and_then(|g| punct_half(g, Punct::Opening)).unwrap_or(0.0);
+        // The hang is of the advance the glyph takes once set flush (as placed below).
+        mojikumi + sg.get(i).map_or(0.0, |g| hang.amount_of(g, Edge::Start, g.adv - mojikumi))
     };
-    compose(sg, &width, &start_credit, &cands, units, &params(strict)).or_else(|| compose(sg, &width, &start_credit, &cands, units, &params(loose)))
+    let end_credit = |t: usize, hyphenated: bool| match t.checked_sub(1).and_then(|k| sg.get(k)) {
+        Some(g) if hyphenated => hang.amount(&hyphen_glyph(g), Edge::End),
+        Some(g) => hang.amount(g, Edge::End),
+        None => 0.0,
+    };
+    let run = |tolerance| compose(sg, &width, &start_credit, &end_credit, &cands, units, &params(tolerance));
+    run(strict).or_else(|| run(loose))
 }
 
 /// Flow paragraphs `paras` (byte ranges) of `t`, each with its own paragraph attributes
@@ -1543,7 +1615,8 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             pen.pending += para.space_before;
         }
         let n = sg.len();
-        let composed = compose_para(cx, &sg, para, justification, &units, &pen, rtl);
+        let roman_optical = Hang::of(t, para, rtl, cx.vertical);
+        let composed = compose_para(cx, &sg, para, justification, &units, &pen, rtl, roman_optical);
         let mut li_para = 0;
         let mut i = 0;
         loop {
@@ -1578,9 +1651,12 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                             hyphenate: para.hyphenate && (hyphen_limit == 0 || hyphen_run < hyphen_limit),
                             // Hyphenation Zone applies with the Single-line Composer only.
                             zone: if composer == Composer::SingleLine { para.hyphenation.clamped().zone } else { 0.0 },
+                            hang: roman_optical,
                             ..LineRules::of(para)
                         };
-                        break_line(cx.text, &sg, i, width, &rules)
+                        // The first character hanging outside the start is room on the line.
+                        let start_hang = sg.get(i).map_or(0.0, |g| roman_optical.amount(g, Edge::Start));
+                        break_line(cx.text, &sg, i, width + start_hang, &rules)
                     }
                     _ => (n, false),
                 };
@@ -1625,6 +1701,10 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                 None => 0.0,
             };
             let w: f64 = sg[i..trimmed].iter().map(|g| g.adv).sum::<f64>() + hyphen.as_ref().map_or(0.0, |h| h.adv) - end_trim;
+            // Roman Hanging Punctuation and Optical Margin Alignment: what the line's first
+            // character stands outside its start.
+            let start_hang =
+                if roman_optical.active() && trimmed > i { sg.get(i).map_or(0.0, |g| roman_optical.amount(g, Edge::Start)) } else { 0.0 };
             // Burasagari: a comma or full stop ending an area type line hangs outside it (Standard:
             // when it doesn't fit; Forced: always). The rest of the line is aligned and justified
             // without it, and it follows the line's last character.
@@ -1635,11 +1715,28 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                 .map(|g| g.adv - end_trim)
                 .filter(|_| match para.burasagari {
                     Burasagari::None => false,
-                    Burasagari::Standard => w > width + EPS,
+                    Burasagari::Standard => w - start_hang > width + EPS,
                     Burasagari::Forced => true,
                 });
             let body = if hang.is_some() { trimmed - 1 } else { trimmed };
             let w = w - hang.unwrap_or(0.0);
+            // Roman Hanging Punctuation and Optical Margin Alignment: the line's first character
+            // stands partly outside its start and its last (or the hyphen) outside its end. The
+            // rest is aligned and justified between the edges, so a justified line fills to the
+            // hung edges.
+            let (hang_start, hang_end) = if roman_optical.active() && trimmed > i {
+                let start = start_hang;
+                let end = match &hyphen {
+                    _ if hang.is_some() => 0.0,
+                    Some(h) => roman_optical.amount(h, Edge::End),
+                    None => sg.get(trimmed - 1).map_or(0.0, |g| roman_optical.amount(g, Edge::End)),
+                };
+                // A line of one character can't hang more than its width.
+                (start.min(w.max(0.0)), end.min((w - start).max(0.0)))
+            } else {
+                (0.0, 0.0)
+            };
+            let w = w - hang_start - hang_end;
             let (align, justify) = match para.justify {
                 Justify::Auto => (if rtl { 2 } else { 0 }, false),
                 Justify::Left => (0, false),
@@ -1665,6 +1762,12 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                         .is_some_and(|(a, b)| !a.is_space() && !b.is_space() && !b.continues_tcy() && a.ch != '\t' && (is_cjk(a.ch) || is_cjk(b.ch)))
             };
             let cjk_gaps = (i..body).filter(|&j| cjk_gap(j)).count();
+            // A hung first or last glyph keeps its advance in a justified line (no Glyph Scaling,
+            // no Letter Spacing between it and its neighbour), so it hangs exactly as far as
+            // reckoned above and the text beside it stands on the edge.
+            let (skip_first, skip_last) = (hang_start > 0.0, hang_end > 0.0 && hyphen.is_none() && body == trimmed);
+            let keep_glyph = |j: usize| !((skip_first && j == i) || (skip_last && j + 1 == body));
+            let keep_unit = |j: usize| !((skip_first && j == i) || (skip_last && j + 2 == body));
             // Single Word Justification: a justified line with no word space may be aligned
             // instead of spread (or, in a file from before the option, spread only in Justify All
             // Lines).
@@ -1689,8 +1792,8 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                         spaces,
                         space_width: line.iter().filter(|g| g.is_space()).map(|g| g.adv).sum(),
                         min_space: line.iter().filter(|g| g.is_space()).map(|g| g.adv).fold(f64::MAX, f64::min),
-                        units: (i..body.saturating_sub(1)).filter_map(|j| units.get(j)).sum(),
-                        chars: line.iter().filter(|g| justify::is_char(g)).map(|g| g.adv).sum(),
+                        units: (i..body.saturating_sub(1)).filter(|&j| keep_unit(j)).filter_map(|j| units.get(j)).sum(),
+                        chars: line.iter().enumerate().filter(|&(k, g)| justify::is_char(g) && keep_glyph(i + k)).map(|(_, g)| g.adv).sum(),
                         gaps: sg.get(i + 1..body).map_or(0, |s| s.iter().filter(|g| !g.continues_tcy()).count()),
                     };
                     let f = justify::fill(width - w, &stuff, &glue, spread);
@@ -1711,7 +1814,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                     1 => ax0 + (width - w) * 0.5,
                     _ => ax1 - w,
                 }
-            };
+            } - hang_start;
             let li = cx.out.lines.len();
             let glyph_start = cx.out.glyphs.len();
             // Character Alignment lines smaller characters up with the line's largest em box.
@@ -1732,7 +1835,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                 let Some(g) = sg.get(j) else { continue };
                 // Glyph Scaling of a justified line.
                 let scaled;
-                let g = if glyph_scale != 1.0 && j < body && justify::is_char(g) {
+                let g = if glyph_scale != 1.0 && j < body && justify::is_char(g) && keep_glyph(j) {
                     let mut c = g.clone();
                     justify::scale_glyph(&mut c, glyph_scale);
                     scaled = c;
@@ -1747,7 +1850,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                 if g.ch == '\t' {
                     adv = tab_advance(&para.tabs, tab_origin, x, &sg[j + 1..trimmed.max(j + 1)]);
                 } else if j < body {
-                    if j + 1 < body {
+                    if j + 1 < body && keep_unit(j) {
                         // Letter Spacing of a justified line.
                         adv += per_unit * units.get(j).copied().unwrap_or(0.0);
                     }
