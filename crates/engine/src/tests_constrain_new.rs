@@ -288,7 +288,8 @@ fn constrain_angle_turns_the_new_objects_bounding_box() {
     let rotated = selection_rotation(&s);
     assert!(close(rotated, 30.0), "{rotated}");
     let shift = Mods { shift: true, ..Mods::default() };
-    let draws: [(&str, Mods, [(PointerKind, f64, f64); 4]); 6] = [
+    type Stroke = [(PointerKind, f64, f64); 4];
+    let draws: [(&str, Mods, Stroke); 6] = [
         ("rectangle", Mods::default(), [(Down, 20.0, 20.0), (Drag, 50.0, 40.0), (Drag, 80.0, 60.0), (Up, 80.0, 60.0)]),
         ("ellipse", Mods::default(), [(Down, 20.0, 120.0), (Drag, 50.0, 140.0), (Drag, 80.0, 160.0), (Up, 80.0, 160.0)]),
         ("polygon", shift, [(Down, 150.0, 50.0), (Drag, 170.0, 70.0), (Drag, 180.0, 80.0), (Up, 180.0, 80.0)]),
