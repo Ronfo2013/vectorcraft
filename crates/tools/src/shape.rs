@@ -117,7 +117,8 @@ impl ShapeTool {
             "polygon" | "star" => {
                 let v = p - start;
                 let r = v.hypot().max(0.01);
-                let rot = if m.shift { 0.0 } else { (v.atan2().to_degrees() + 90.0) % 360.0 };
+                // Shift keeps the base orientation: upright, turned by the Constrain Angle.
+                let rot = if m.shift { vectorcraft_geom::constrain_rotation(base).unwrap_or(0.0) } else { (v.atan2().to_degrees() + 90.0) % 360.0 };
                 if self.id == "polygon" {
                     ("shape.polygon".into(), json!({ "cx": start.x, "cy": start.y, "radius": r, "sides": self.sides, "rotation": rot }))
                 } else {
@@ -134,15 +135,7 @@ impl ShapeTool {
             }
             _ => {
                 let cmd = if self.id == "ellipse" { "shape.ellipse" } else { "shape.rectangle" };
-                let mut v = match turned_box(start, p, m, base) {
-                    (r, None) => json!({ "x": r.x0, "y": r.y0, "width": r.width(), "height": r.height() }),
-                    (r, Some(axes)) => {
-                        // The box's centre out on the page again; the shape turns about it.
-                        let c = axes * r.center();
-                        let rotation = -vectorcraft_geom::normalize_deg(base);
-                        json!({ "x": c.x - r.width() / 2.0, "y": c.y - r.height() / 2.0, "width": r.width(), "height": r.height(), "rotation": rotation })
-                    }
-                };
+                let mut v = box_params(start, p, m, base);
                 if self.id == "roundedRectangle" {
                     v["radius"] = json!(self.corner_radius);
                 }
@@ -156,12 +149,26 @@ impl ShapeTool {
 /// measured along the page axes turned by Constrain Angle `base`: the box in those axes, and the
 /// axes (`None` for the page's own: 0° or a whole turn, where the box is on the page exactly).
 /// The drawn shape and its size label both come from it.
-fn turned_box(start: Point, p: Point, m: Mods, base: f64) -> (Rect, Option<Affine>) {
+pub(crate) fn turned_box(start: Point, p: Point, m: Mods, base: f64) -> (Rect, Option<Affine>) {
     match vectorcraft_geom::constrain_axes(base) {
         None => (drag_rect(start, p, m), None),
         Some(axes) => {
             let back = axes.inverse();
             (drag_rect(back * start, back * p, m), Some(axes))
+        }
+    }
+}
+
+/// The `{x, y, width, height, rotation?}` params of the box a drag from `start` to `p` draws along
+/// Constrain Angle `base` ([`turned_box`]): the box's page position at 0° or a whole turn, else
+/// the turned box's centre out on the page again with the rotation that turns it about it.
+pub(crate) fn box_params(start: Point, p: Point, m: Mods, base: f64) -> Value {
+    match turned_box(start, p, m, base) {
+        (r, None) => json!({ "x": r.x0, "y": r.y0, "width": r.width(), "height": r.height() }),
+        (r, Some(axes)) => {
+            let c = axes * r.center();
+            let rotation = -vectorcraft_geom::normalize_deg(base);
+            json!({ "x": c.x - r.width() / 2.0, "y": c.y - r.height() / 2.0, "width": r.width(), "height": r.height(), "rotation": rotation })
         }
     }
 }

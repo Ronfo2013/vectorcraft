@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (Preferences: Constrain Angle, Corner Radius, Appearance of Black and Real-time Drawing and Editing act, #394 first batch; bezier drag previews follow the pointer back into the window and to the release, #834; units survive an SVG save, #864; G1: Alt swaps Direct and Group Selection, Shift-click subtracts segments and grouped objects, Scissors/Pencil/Knife Alt behaviours from the shortcut reference; earlier: a marquee needs to touch a path, #1103) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (Preferences: Constrain Angle sets the angle of new type, grids, Shift-drawn polygons and stars and click-made shapes, #394; earlier: Constrain Angle, Corner Radius, Appearance of Black and Real-time Drawing and Editing act, #394 first batch; bezier drag previews follow the pointer back into the window and to the release, #834; units survive an SVG save, #864; G1: Alt swaps Direct and Group Selection, Shift-click subtracts segments and grouped objects, Scissors/Pencil/Knife Alt behaviours from the shortcut reference; earlier: a marquee needs to touch a path, #1103) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft's tools, handles, snapping and panels behave next to Illustrator's. A vector illustrator's
 trust is in the details: where a handle lands, what Shift and Alt do mid-drag, what a smart guide snaps to,
@@ -166,7 +166,7 @@ Layers panel.
 | SVG Interactivity, Retype, Comments, Version History panels | missing | the last two are cloud features (out of scope) |
 | Workspaces (save, reset, switch) | done | |
 | Preferences: every option acts | partial | ~12 stored but unused (#394): Highlight Alternate Glyphs, Identify Objects By, East Asian Type units, Open Documents As Tabs, GPU Performance beyond Animated Zoom and Real-time Drawing, hyphenation language, Low Resolution Proxy for Linked EPS, scratch disks, legacy clipboard, Touch Workspace |
-| Preferences › General › Constrain Angle | done | arrow keys and Shift drags along the turned axes; Rectangle, Rounded Rectangle and Ellipse tools draw along them; not yet type, grids, polygons, stars or click-made shapes (#394) |
+| Preferences › General › Constrain Angle | done | arrow keys and Shift drags along the turned axes; the Rectangle, Rounded Rectangle, Ellipse and grid tools, point and area type, and the shape size dialogs draw along them; Shift-drawn polygons and stars keep the turned base orientation; the Line Segment tool's Shift steps count from it (#394); the grid tools have no click dialog yet |
 | Preferences › General › Corner Radius | done | the Rounded Rectangle tool's and dialog's radius; ↑/↓ while drawing set it (#394) |
 | Preferences › Appearance of Black (On Screen, Printing / Exporting) | done | black ink alone as jet black on the canvas and in RGB/greyscale raster exports, Export for Screens and Save for Web; SVG, PDF and printing keep the CMYK values (#394) |
 | Preferences › Performance › Real-time Drawing and Editing | done | off (or GPU Performance off): during a drag on the canvas the art redraws at the release while the selection's outlines follow the drag; dialog and panel previews still draw live (#394) |
@@ -182,6 +182,7 @@ re-measure of the panels added since.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Preferences › Constrain Angle: new type, grids, Shift-drawn polygons and stars, the shape size dialogs and the Line Segment tool (#394) |
 | 2026-10-12 | minor | Preferences rows: Appearance of Black reaches Save for Web; Real-time Drawing off holds only canvas drags (#394 review fixes) |
 | 2026-10-12 | minor | Preferences rows: Constrain Angle, Corner Radius, Appearance of Black, Real-time Drawing and Editing done (#394 first batch); ~12 stored options left |
 | 2026-10-11 | minor | Pen, Anchor Point and Direct Selection drags: the preview gets every pointer position, including after the pointer re-enters the window and the move in the release's frame (#834); score unchanged (estimated) |

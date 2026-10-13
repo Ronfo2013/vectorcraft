@@ -290,11 +290,27 @@ impl TypeTool {
                 return out;
             }
         }
-        let area = drag.map(|d| Rect::from_points(at, d)).filter(|r| r.width() > cx.tol(6.0) && r.height() > cx.tol(6.0));
+        // New type is set along General › Constrain Angle's axes (none at 0° or a whole turn): an
+        // area's box measured along them, turned about its top-left corner, point type about its
+        // first baseline's start.
+        let axes = vectorcraft_geom::constrain_axes(cx.constrain_angle);
+        let back = axes.map(|a| a.inverse());
+        let area = drag
+            .map(|d| match back {
+                Some(b) => Rect::from_points(b * at, b * d),
+                None => Rect::from_points(at, d),
+            })
+            .filter(|r| r.width() > cx.tol(6.0) && r.height() > cx.tol(6.0));
         let mut params = match area {
-            Some(r) => json!({"x": r.x0, "y": r.y0, "text": "", "area": {"width": r.width(), "height": r.height()}}),
+            Some(r) => {
+                let o = axes.map_or(r.origin(), |a| a * r.origin());
+                json!({"x": o.x, "y": o.y, "text": "", "area": {"width": r.width(), "height": r.height()}})
+            }
             None => json!({"x": at.x, "y": at.y, "text": ""}),
         };
+        if let Some(rotation) = vectorcraft_geom::constrain_rotation(cx.constrain_angle) {
+            params["rotation"] = json!(rotation);
+        }
         params["vertical"] = json!(self.vertical);
         params["placeholder"] = json!(cx.placeholder_text);
         out.push(Action::Exec("text.create".into(), params));
@@ -726,7 +742,16 @@ impl Tool for TypeTool {
     fn overlays(&self, cx: &ToolContext) -> Vec<Overlay> {
         let mut o = self.snap.guides().to_vec();
         if let (Some((_, s)), Some(d)) = (self.press, self.drag) {
-            o.push(Overlay::Marquee(Rect::from_points(s, d)));
+            match vectorcraft_geom::constrain_axes(cx.constrain_angle) {
+                None => o.push(Overlay::Marquee(Rect::from_points(s, d))),
+                // The area being drawn along the Constrain Angle's axes, as `on_up` makes it.
+                Some(axes) => {
+                    let back = axes.inverse();
+                    let mut path = Rect::from_points(back * s, back * d).to_path(0.1);
+                    path.apply_affine(axes);
+                    o.push(Overlay::Path { path, color: [79, 128, 255], width: 1.0, dashed: true });
+                }
+            }
         }
         // Overflow markers on selected text.
         for id in &cx.selection.objects {
