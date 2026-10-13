@@ -266,3 +266,103 @@ fn constrain_angle_steps_the_line_segment_tool() {
     assert!(close(line(&mut s, 30.0, (200.0, 45.0)), 30.0), "along the turned x axis");
     assert!(close(line(&mut s, 90.0, level), 0.0));
 }
+
+fn selection_rotation(s: &Session) -> f64 {
+    // What `document.inspect` reports as `selectionRotation`.
+    let st = s.doc().unwrap();
+    st.doc.bbox_angle(&st.selection.objects)
+}
+
+fn bbox_angle(s: &Session, id: NodeId) -> f64 {
+    s.doc().unwrap().doc.node(id).unwrap().bbox_angle
+}
+
+/// Objects drawn along a Constrain Angle keep a bounding box turned with them, as after the Rotate
+/// tool: at 30° the selection's rotation is 30°, the same as a rectangle turned 30° by
+/// `object.rotate`; at 0° and whole turns the box stays on the page (exactly 0, not −0).
+#[test]
+fn constrain_angle_turns_the_new_objects_bounding_box() {
+    let mut s = new_doc();
+    s.execute("shape.rectangle", &json!({"x": 300, "y": 300, "width": 40, "height": 20})).unwrap();
+    s.execute("object.rotate", &json!({"angle": 30})).unwrap();
+    let rotated = selection_rotation(&s);
+    assert!(close(rotated, 30.0), "{rotated}");
+    let shift = Mods { shift: true, ..Mods::default() };
+    let draws: [(&str, Mods, [(PointerKind, f64, f64); 4]); 6] = [
+        ("rectangle", Mods::default(), [(Down, 20.0, 20.0), (Drag, 50.0, 40.0), (Drag, 80.0, 60.0), (Up, 80.0, 60.0)]),
+        ("ellipse", Mods::default(), [(Down, 20.0, 120.0), (Drag, 50.0, 140.0), (Drag, 80.0, 160.0), (Up, 80.0, 160.0)]),
+        ("polygon", shift, [(Down, 150.0, 50.0), (Drag, 170.0, 70.0), (Drag, 180.0, 80.0), (Up, 180.0, 80.0)]),
+        ("star", shift, [(Down, 150.0, 150.0), (Drag, 170.0, 170.0), (Drag, 180.0, 180.0), (Up, 180.0, 180.0)]),
+        ("rectangularGrid", Mods::default(), [(Down, 220.0, 20.0), (Drag, 250.0, 40.0), (Drag, 280.0, 60.0), (Up, 280.0, 60.0)]),
+        ("polarGrid", Mods::default(), [(Down, 220.0, 120.0), (Drag, 250.0, 140.0), (Drag, 280.0, 160.0), (Up, 280.0, 160.0)]),
+    ];
+    for deg in [0.0, 360.0, 30.0] {
+        set_angle(&mut s, deg);
+        for (tool, mods, events) in &draws {
+            s.select_tool(tool, ViewInfo::default()).unwrap();
+            gesture(&mut s, *mods, events);
+            let id = last_id(&s);
+            if deg == 30.0 {
+                assert!(close(selection_rotation(&s), rotated), "{tool}: {}", selection_rotation(&s));
+            } else {
+                assert_eq!(bbox_angle(&s, id).to_bits(), 0.0f64.to_bits(), "{tool} at {deg}°");
+            }
+        }
+    }
+    // A grid's lines turn their boxes with it, and so does new type.
+    let id =
+        NodeId(s.execute("shape.polarGrid", &json!({"x": 0, "y": 0, "width": 40, "height": 20, "rotation": -30})).unwrap()["id"].as_u64().unwrap());
+    let n = s.doc().unwrap().doc.node(id).unwrap().clone();
+    assert!(n.children().unwrap().iter().all(|c| close(c.bbox_angle, 30.0)));
+    s.execute("text.create", &json!({"x": 10, "y": 20, "text": "Hi", "rotation": -30})).unwrap();
+    assert!(close(selection_rotation(&s), 30.0));
+    s.execute("text.create", &json!({"x": 10, "y": 20, "text": "Hi"})).unwrap();
+    assert_eq!(selection_rotation(&s).to_bits(), 0.0f64.to_bits());
+}
+
+/// The grid commands refuse a `rotation` that is not a number.
+#[test]
+fn grid_rotation_must_be_a_number() {
+    let mut s = new_doc();
+    for cmd in ["shape.rectangularGrid", "shape.polarGrid"] {
+        for bad in [json!("x"), Value::Null] {
+            assert!(s.execute(cmd, &json!({"x": 0, "y": 0, "width": 40, "height": 20, "rotation": bad})).is_err(), "{cmd}: {bad}");
+        }
+    }
+}
+
+/// Area type dragged at 30°: its frame runs along the turned axes with the drag's start and end
+/// at opposite corners; vertical type takes a rotation as horizontal type does.
+#[test]
+fn constrain_angle_sets_area_and_vertical_type() {
+    let mut s = new_doc();
+    set_angle(&mut s, 30.0);
+    s.select_tool("type", ViewInfo::default()).unwrap();
+    gesture(&mut s, Mods::default(), &[(Down, 100.0, 100.0), (Drag, 150.0, 150.0), (Drag, 250.0, 200.0), (Up, 250.0, 200.0)]);
+    let id = last_id(&s);
+    let NodeKind::Text(t) = &s.doc().unwrap().doc.node(id).unwrap().kind else { panic!("type") };
+    let [a, b, ..] = t.xf.as_coeffs();
+    assert!(close(-b.atan2(a).to_degrees(), 30.0), "{:?}", t.xf);
+    let TextKind::Area { frame } = &t.kind else { panic!("area type") };
+    // The drag (150 right, 100 down) measured along axes turned 30° counter-clockwise.
+    let r = 30f64.to_radians();
+    let (w, h) = (150.0 * r.cos() - 100.0 * r.sin(), 150.0 * r.sin() + 100.0 * r.cos());
+    let local = frame.bounds().unwrap();
+    assert!(close(local.width(), w.abs()) && close(local.height(), h.abs()), "{local:?} vs {w} × {h}");
+    let corners: Vec<Point> = [(local.x0, local.y0), (local.x1, local.y0), (local.x0, local.y1), (local.x1, local.y1)]
+        .iter()
+        .map(|&(x, y)| t.xf * Point::new(x, y))
+        .collect();
+    for p in [Point::new(100.0, 100.0), Point::new(250.0, 200.0)] {
+        assert!(corners.iter().any(|c| close(c.x, p.x) && close(c.y, p.y)), "{p:?} in {corners:?}");
+    }
+    assert!(close(selection_rotation(&s), 30.0));
+    s.select_tool("selection", ViewInfo::default()).unwrap();
+    // Vertical type with a rotation.
+    let r = s.execute("text.create", &json!({"x": 300, "y": 50, "text": "Up", "vertical": true, "rotation": -90})).unwrap();
+    let id = NodeId(r["id"].as_u64().unwrap());
+    let NodeKind::Text(t) = &s.doc().unwrap().doc.node(id).unwrap().kind else { panic!("type") };
+    assert!(t.vertical);
+    assert_eq!(t.xf.as_coeffs(), [0.0, -1.0, 1.0, 0.0, 300.0, 50.0]);
+    assert_eq!(bbox_angle(&s, id), 90.0);
+}

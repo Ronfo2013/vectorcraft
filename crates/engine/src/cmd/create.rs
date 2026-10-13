@@ -95,6 +95,29 @@ pub(crate) fn add_node(s: &mut Session, label: &str, kind: NodeKind, appearance:
 
 /// Insert a new object looking like `look` (drawing modes apply); select it.
 pub(crate) fn add_look(s: &mut Session, label: &str, kind: NodeKind, look: NewArt, name: Option<String>) -> Result<Value> {
+    add_look_turned(s, label, kind, look, name, 0.0)
+}
+
+/// [`add_art`] for an object made turned by a `rotation` param (degrees, clockwise on the page):
+/// its bounding box turns with it, as after the Rotate tool.
+fn add_art_turned(s: &mut Session, label: &str, kind: NodeKind, rotation: f64) -> Result<Value> {
+    let look = s.new_art_look(s.paint.fill.clone(), s.paint.stroke.clone(), s.paint.stroke_width);
+    add_look_turned(s, label, kind, look, None, bbox_turn(rotation))
+}
+
+/// The bounding-box angle (counter-clockwise, as `Node::bbox_angle` and the Rotate tool keep it)
+/// of an object made with the clockwise `rotation` param: 0 exactly for none, a whole turn or a
+/// non-finite angle, so such objects are as they were.
+fn bbox_turn(rotation: f64) -> f64 {
+    if !rotation.is_finite() {
+        return 0.0;
+    }
+    let a = vectorcraft_geom::normalize_deg(-rotation);
+    if a == 0.0 { 0.0 } else { a }
+}
+
+/// [`add_look`] with the new object's bounding box turned to `bbox_angle`.
+fn add_look_turned(s: &mut Session, label: &str, kind: NodeKind, look: NewArt, name: Option<String>, bbox_angle: f64) -> Result<Value> {
     let parent = s.doc()?.target_parent()?;
     let mode = s.draw_mode;
     let inside = s.draw_inside;
@@ -104,6 +127,7 @@ pub(crate) fn add_look(s: &mut Session, label: &str, kind: NodeKind, look: NewAr
         let mut n = Node::new(id, kind);
         look.apply(d, &mut n);
         n.name = name;
+        n.bbox_angle = bbox_angle;
         match (mode, inside) {
             (crate::DrawMode::Inside, Some(target)) if d.node(target).is_some() => {
                 // Wrap the target once in a clip group [mask copy, target, …new art].
@@ -238,13 +262,13 @@ fn rectangle(s: &mut Session, p: &Value) -> Result<Value> {
         xf: rect_transform(r, p, "shape.rectangle")?,
     };
     let label = if radius > 0.0 { "Rounded Rectangle" } else { "Rectangle" };
-    add_art(s, label, path_kind(live.to_path(), Some(live)), None)
+    add_art_turned(s, label, path_kind(live.to_path(), Some(live)), f64_or(p, "rotation", 0.0))
 }
 
 fn ellipse(s: &mut Session, p: &Value) -> Result<Value> {
     let r = rect_of(p, "shape.ellipse")?;
     let live = LiveShape::Ellipse { w: r.width(), h: r.height(), pie: (0.0, 360.0), xf: rect_transform(r, p, "shape.ellipse")? };
-    add_art(s, "Ellipse", path_kind(live.to_path(), Some(live)), None)
+    add_art_turned(s, "Ellipse", path_kind(live.to_path(), Some(live)), f64_or(p, "rotation", 0.0))
 }
 
 fn polygon(s: &mut Session, p: &Value) -> Result<Value> {
@@ -254,7 +278,7 @@ fn polygon(s: &mut Session, p: &Value) -> Result<Value> {
     let rot = f64_or(p, "rotation", 0.0);
     let xf = Affine::translate(c.to_vec2()) * vectorcraft_geom::rotate_deg(rot);
     let live = LiveShape::Polygon { radius: r, sides, xf, radii: vec![], kinds: vec![] };
-    add_art(s, "Polygon", path_kind(live.to_path(), Some(live)), None)
+    add_art_turned(s, "Polygon", path_kind(live.to_path(), Some(live)), rot)
 }
 
 fn star(s: &mut Session, p: &Value) -> Result<Value> {
@@ -270,7 +294,7 @@ fn star(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         shapes::star(c, r1, r2, n, rot)
     };
-    add_art(s, "Star", path_kind(path, None), None)
+    add_art_turned(s, "Star", path_kind(path, None), rot)
 }
 
 /// Flare tool: a lens flare built from radial-gradient paths in Screen mode — a bright centre, a halo
@@ -403,7 +427,7 @@ fn arc(s: &mut Session, p: &Value) -> Result<Value> {
     add_art(s, "Arc", path_kind(shapes::arc(a, b, 0.0, bool_or(p, "closed", false)), None), None)
 }
 
-fn grid_group(s: &mut Session, label: &str, paths: Vec<PathData>) -> Result<Value> {
+fn grid_group(s: &mut Session, label: &str, (paths, bbox_angle): (Vec<PathData>, f64)) -> Result<Value> {
     let parent = s.doc()?.target_parent()?;
     let look = s.new_art_look(vectorcraft_color::Paint::None, s.paint.stroke.clone(), s.paint.stroke_width);
     let id = s.edit(label, |d, sel| {
@@ -412,11 +436,14 @@ fn grid_group(s: &mut Session, label: &str, paths: Vec<PathData>) -> Result<Valu
             .map(|pd| {
                 let mut n = Node::path(d.alloc_id(), pd, Appearance::default());
                 look.apply(d, &mut n);
+                n.bbox_angle = bbox_angle;
                 std::sync::Arc::new(n)
             })
             .collect();
         let gid = d.alloc_id();
-        d.insert(parent, usize::MAX, Node::group(gid, children))?;
+        let mut g = Node::group(gid, children);
+        g.bbox_angle = bbox_angle;
+        d.insert(parent, usize::MAX, g)?;
         sel.set([gid]);
         Ok(gid)
     })?;
@@ -438,8 +465,8 @@ fn polar_grid(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A grid's paths in `r` turned by the `rotation` param about the centre of `r` (a grid drawn
-/// along a Constrain Angle); as they are without it or at 0.
-fn turned_grid(p: &Value, r: Rect, mut paths: Vec<PathData>, cmd: &str) -> Result<Vec<PathData>> {
+/// along a Constrain Angle), and their bounding-box angle; as they are without it or at 0.
+fn turned_grid(p: &Value, r: Rect, mut paths: Vec<PathData>, cmd: &str) -> Result<(Vec<PathData>, f64)> {
     let rotation = if p.get("rotation").is_some() { f64_req(p, "rotation", cmd)? } else { 0.0 };
     if !rotation.is_finite() {
         return Err(bad(cmd, "rotation must be finite"));
@@ -451,7 +478,7 @@ fn turned_grid(p: &Value, r: Rect, mut paths: Vec<PathData>, cmd: &str) -> Resul
             path.transform(m);
         }
     }
-    Ok(paths)
+    Ok((paths, bbox_turn(rotation)))
 }
 
 /// An anchor `{x, y, in?, out?, smooth?}` given to `cmd` (handles `[x, y]`, at the anchor when
@@ -529,7 +556,7 @@ fn text_create(s: &mut Session, p: &Value) -> Result<Value> {
         // Lays the text out (and sizes an Auto Size frame).
         super::typecmd::refresh_bounds(&mut t);
     }
-    add_node(s, "Type", NodeKind::Text(Box::new(t)), Appearance::default(), None)
+    add_look_turned(s, "Type", NodeKind::Text(Box::new(t)), NewArt::plain(Appearance::default()), None, bbox_turn(rotation))
 }
 
 /// The paragraph attributes new type gets (the Type tools, `text.create`): aligned to the start of

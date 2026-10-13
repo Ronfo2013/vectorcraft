@@ -171,7 +171,8 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
   Objects By, East Asian Type units, Open Documents As Tabs, GPU Performance beyond Animated Zoom and Real-time
   Drawing, hyphenation Default Language, Use Low Resolution Proxy for Linked EPS, the two scratch disks, the two
   legacy clipboard options, Touch Workspace), the Rectangular and Polar Grid Tool Options dialogs (a grid tool
-  click opens nothing yet, so no click-made grid follows Constrain Angle), Properties panel per context, context menus beyond the canvas, Layers panel row menus and Collect for
+  click opens nothing yet, so no click-made grid follows Constrain Angle), Constrain Angle for arcs, spirals, flares
+  and Pen paths, Properties panel per context, context menus beyond the canvas, Layers panel row menus and Collect for
   Export, SVG Interactivity.
 - **Done (2026-10-12, #394 first batch):** General › Constrain Angle turns the arrow keys' axes, holds every Shift
   drag (Selection, Direct Selection, Free Transform, slices, Reshape, Knife, Measure, Pen handles) to the turned
@@ -180,7 +181,8 @@ from G14 and the budget run of G15: **~170–270 h** one agent, ~50–80 h wall 
   Exporting (black ink alone as jet black on the canvas, in raster exports, Export for Screens and Save for Web); Performance ›
   Real-time Drawing and Editing (off, or GPU Performance off: during a drag on the canvas the art redraws at the
   release while the outlines follow the drag; dialog and panel previews still draw live).
-- **Done (2026-10-13, #394):** Constrain Angle sets the angle of every new object: point type turns about its
+- **Done (2026-10-13, #394):** Constrain Angle sets the angle of new type, grids and shapes (not yet arcs, spirals,
+  flares or Pen paths; their bounding box turns with them, as after the Rotate tool): point type turns about its
   first baseline's start and area type's box is measured along the turned axes (`text.create` `rotation`);
   rectangular and polar grids are drawn along them (`rotation` on both commands); Shift keeps polygons and stars
   at their base orientation turned by it; the Rectangle, Rounded Rectangle, Ellipse, Polygon and Star size
