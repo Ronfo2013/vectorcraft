@@ -17,5 +17,7 @@ flate2 = { workspace = true }
 
 [dev-dependencies]
 vectorcraft-testkit = { workspace = true }
+# Lays out loaded paragraphs in the format property tests.
+vectorcraft-text = { workspace = true }
 proptest = { workspace = true }
 vectorcraft-geom = { workspace = true }

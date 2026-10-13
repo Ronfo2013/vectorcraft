@@ -3085,6 +3085,13 @@ pub fn invoke(app: &mut VectorcraftApp, id: &str, p: Value) {
         }
         return;
     }
+    // Paragraph panel menu › Justification… / Hyphenation…: dialogs with the paragraph's values.
+    if matches!(id, "text.justification" | "text.hyphenation") && p.as_object().is_none_or(|o| o.is_empty()) {
+        if let Err(e) = crate::panels::paragraph::options_dialog(app, id) {
+            app.status(e);
+        }
+        return;
+    }
     // Object → Graph → Type… / Data…: dialogs with the selected graph's current values.
     if matches!(id, "graph.setType" | "graph.setData") && p.as_object().is_none_or(|o| o.is_empty()) {
         if let Err(e) = graph_dialog(app, id) {

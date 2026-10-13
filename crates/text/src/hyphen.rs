@@ -1,6 +1,7 @@
 //! Pattern-free English hyphenation: break long words between syllables at vowel–consonant
-//! boundaries (V-CV: "ty-po", and VC-CV: "hap-pen"), never leaving fewer than [`MIN_BEFORE`]
-//! letters before or [`MIN_AFTER`] after the hyphen.
+//! boundaries (V-CV: "ty-po", and VC-CV: "hap-pen"), never leaving fewer than the paragraph's
+//! After First letters before or Before Last letters after the hyphen ([`Hyphenation`]; by
+//! default [`MIN_BEFORE`] and [`MIN_AFTER`]).
 //!
 //! Preferences › Hyphenation › Exceptions (comma separated) override the points for named words:
 //! `typography` never breaks, `ty-pog-ra-phy` breaks only where the hyphens mark. See
@@ -9,7 +10,9 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-/// Only words at least this long are hyphenated (Illustrator's default: longer than 5 letters).
+use vectorcraft_doc::Hyphenation;
+
+/// Only words at least this long are hyphenated by default ([`Hyphenation::min_word`]).
 pub const MIN_WORD: usize = 6;
 pub const MIN_BEFORE: usize = 3;
 pub const MIN_AFTER: usize = 3;
@@ -120,10 +123,21 @@ fn onset_pair(a: char, b: char) -> bool {
     )
 }
 
-/// Allowed hyphenation points in `word`, as char indices (a hyphen goes *before* the char).
-/// Words containing non-letters (other than a trailing apostrophe) are not hyphenated.
-/// Preferences exceptions override the pattern for a matching word.
+/// Allowed hyphenation points in `word`, as char indices (a hyphen goes *before* the char), with
+/// the default Hyphenation options. See [`hyphen_points_with`].
 pub fn hyphen_points(word: &str) -> Vec<usize> {
+    hyphen_points_with(word, &Hyphenation::default())
+}
+
+/// Allowed hyphenation points in `word` under a paragraph's Hyphenation options (Words Longer
+/// Than, After First, Before Last, Hyphenate Capitalized Words). Words containing non-letters
+/// (other than apostrophes) are not hyphenated, nor are words in all capitals. Preferences
+/// exceptions override the pattern for a matching word: their hyphens are where the user wants
+/// the word to break, whatever the letter counts say.
+pub fn hyphen_points_with(word: &str, opts: &Hyphenation) -> Vec<usize> {
+    if !opts.capitalized && word.chars().find(|c| c.is_alphabetic()).is_some_and(char::is_uppercase) {
+        return vec![];
+    }
     if let Some(ex) = exception_for(word) {
         return match ex {
             Exception::Never => vec![],
@@ -132,7 +146,8 @@ pub fn hyphen_points(word: &str) -> Vec<usize> {
     }
     let c: Vec<char> = word.chars().collect();
     let n = c.len();
-    if n < MIN_WORD || !c.iter().all(|c| c.is_alphabetic() || matches!(c, '\'' | '’')) {
+    let min_word = (opts.min_word as usize).max(2);
+    if n < min_word || !c.iter().all(|c| c.is_alphabetic() || matches!(c, '\'' | '’')) {
         return vec![];
     }
     // A capitalised run like "NASA" or a proper name stays whole only when all caps.
@@ -141,7 +156,9 @@ pub fn hyphen_points(word: &str) -> Vec<usize> {
     }
     let v: Vec<bool> = c.iter().map(|&x| is_vowel(x)).collect();
     let mut out = vec![];
-    for i in MIN_BEFORE..=n.saturating_sub(MIN_AFTER) {
+    // At least one letter either side: `i` stays within 1..n, so `c[i - 1]` and `c[i]` exist.
+    let (before, after) = ((opts.after_first as usize).max(1), (opts.before_last as usize).max(1));
+    for i in before..=n.saturating_sub(after) {
         if !c[i].is_alphabetic() || !c[i - 1].is_alphabetic() {
             continue;
         }

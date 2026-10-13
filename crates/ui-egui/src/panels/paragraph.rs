@@ -56,6 +56,31 @@ fn para_cmd(app: &mut VectorcraftApp, cmd: &str, mut p: Value) {
     app.run(cmd, p).ok();
 }
 
+/// Paragraph panel menu › Justification… or Hyphenation… (command `id`, `text.justification` or
+/// `text.hyphenation`): its dialog with the values of the paragraph at the caret (else the selected
+/// type's first), whose OK sets them on the paragraphs `para_cmd` would.
+pub(crate) fn options_dialog(app: &mut VectorcraftApp, id: &str) -> Result<Value, String> {
+    let label = match id {
+        "text.justification" => "Justification",
+        "text.hyphenation" => "Hyphenation",
+        // No other command has these dialogs.
+        _ => return Ok(Value::Null),
+    };
+    text_style(app).ok_or("select some type first")?;
+    let mut fixed = json!({});
+    if let Some((tid, a, b)) = super::character::text_editing(app) {
+        super::character::end_typing(app);
+        fixed = json!({"ids": [tid.0], "start": a, "end": b});
+    }
+    let values = app.session.execute(id, &fixed).map_err(|e| e.to_string())?;
+    let mut fields = values.as_object().cloned().unwrap_or_default();
+    fields.insert("__command".into(), json!(id));
+    fields.insert("__label".into(), json!(label));
+    fields.insert("__params".into(), fixed);
+    app.ui.dialog = Some(crate::state::Dialog { kind: "command".into(), fields });
+    Ok(json!({ "dialog": "command" }))
+}
+
 /// Does the paragraph being edited (at the caret), else the selected text's first paragraph, run
 /// right to left: its Paragraph Direction, else from its first strong character?
 fn resolved_rtl(app: &VectorcraftApp, para: &ParaStyle) -> bool {
@@ -197,8 +222,13 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
         set_pstate(ui.ctx(), "pa-hide-options", !hidden);
     }
     ui.separator();
-    for l in [tl!("Roman Hanging Punctuation"), tl!("Justification…"), tl!("Hyphenation…")] {
-        menu_item(ui, l, false, false);
+    menu_item(ui, tl!("Roman Hanging Punctuation"), false, false);
+    for (l, id) in [(tl!("Justification…"), "text.justification"), (tl!("Hyphenation…"), "text.hyphenation")] {
+        if menu_item(ui, l, has, false)
+            && let Err(e) = options_dialog(app, id)
+        {
+            app.status(e);
+        }
     }
     // How leading is measured (Japanese layout measures it from em box top to em box top), with
     // the East Asian options.

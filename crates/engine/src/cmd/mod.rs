@@ -47,6 +47,7 @@ mod overprint;
 mod package;
 mod paint;
 mod panelcmds;
+pub(crate) mod paraopts;
 mod path;
 mod pathops;
 mod patterncmds;
@@ -235,6 +236,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(views::specs());
         v.extend(maskedit::specs());
         v.extend(tabs::specs());
+        v.extend(paraopts::specs());
         v.extend(docmenu::specs());
         v.extend(variablecmds::specs());
         v.extend(docinfo::specs());
