@@ -59,6 +59,9 @@ pub struct FlareTool {
     /// Whether the flare has rays and rings (the options' Rays and Rings checkboxes).
     rays_on: bool,
     rings_on: bool,
+    /// General › Constrain Angle as the last event saw it: the flare's rays and its rings'
+    /// default direction turn by it.
+    base: f64,
 }
 
 impl Default for FlareTool {
@@ -72,6 +75,7 @@ impl Default for FlareTool {
             values: FLARE_OPTIONS.map(|(_, default, _, _)| default),
             rays_on: true,
             rings_on: true,
+            base: 0.0,
         }
     }
 }
@@ -114,6 +118,10 @@ impl FlareTool {
             v["x2"] = json!(e.x);
             v["y2"] = json!(e.y);
         }
+        // Drawn along General › Constrain Angle (none at 0° or a whole turn).
+        if let Some(rotation) = vectorcraft_geom::constrain_rotation(self.base) {
+            v["rotation"] = json!(rotation);
+        }
         v
     }
 }
@@ -127,6 +135,7 @@ impl Tool for FlareTool {
     }
     fn pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Vec<Action> {
         self.hover = ev.pos;
+        self.base = cx.constrain_angle;
         match ev.kind {
             PointerKind::Down => {
                 if self.placed.is_none() {

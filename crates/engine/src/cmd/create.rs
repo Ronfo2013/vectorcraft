@@ -26,19 +26,19 @@ pub fn specs() -> Vec<CommandSpec> {
             "Flare",
             [],
             None,
-            "{cx, cy, diameter=100, opacity=50 (%), brightness=30 (%), growth=20 (%), fuzziness=50 (%), rays=15, longest=300 (%), rayFuzziness=100 (%), x2?, y2? (ring end; else pathLength at direction), pathLength=300, rings=10, largest=50 (%), direction=45 (deg), seed?} → {id}",
+            "{cx, cy, diameter=100, opacity=50 (%), brightness=30 (%), growth=20 (%), fuzziness=50 (%), rays=15, longest=300 (%), rayFuzziness=100 (%), x2?, y2? (ring end; else pathLength at direction), pathLength=300, rings=10, largest=50 (%), direction=45 (deg), seed?, rotation?: deg (rays and direction, about the centre)} → {id}",
             has_doc,
             flare
         ),
         cmd!("shape.line", "Line Segment", [], None, "{x1, y1, x2, y2} → {id}", has_doc, line),
-        cmd!("shape.spiral", "Spiral", [], None, "{cx, cy, radius, decay=80 (%), segments=10, clockwise?} → {id}", has_doc, spiral),
-        cmd!("shape.arc", "Arc", [], None, "{x1, y1, x2, y2, closed?} → {id}", has_doc, arc),
+        cmd!("shape.spiral", "Spiral", [], None, "{cx, cy, radius, decay=80 (%), segments=10, clockwise?, rotation?: deg (about centre)} → {id}", has_doc, spiral),
+        cmd!("shape.arc", "Arc", [], None, "{x1, y1, x2, y2, closed?, rotation?: deg (the arc's axes, about x1, y1)} → {id}", has_doc, arc),
         cmd!(
             "shape.rectangularGrid",
             "Rectangular Grid",
             [],
             None,
-            "{x, y, width, height, rows=5, columns=5, rotation?: deg (about centre)} → {id}",
+            "{x, y, width, height, rows=5, columns=5, rowSkew=0 (%, + towards the top), columnSkew=0 (%, + towards the right), frame=true (outside as one rectangle), fill=false (the current fill), rotation?: deg (about centre)} → {id}",
             has_doc,
             rect_grid
         ),
@@ -47,7 +47,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Polar Grid",
             [],
             None,
-            "{x, y, width, height, concentric=5, radial=5, rotation?: deg (about centre)} → {id}",
+            "{x, y, width, height, concentric=5, radial=5, concentricSkew=0 (%, + outwards), radialSkew=0 (%, + towards the top), compound=false (the ellipses as one compound path, every other ring filled), fill=false (the current fill), rotation?: deg (about centre)} → {id}",
             has_doc,
             polar_grid
         ),
@@ -56,7 +56,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Create Path",
             [],
             None,
-            "{anchors: [{x, y, in?: [x,y], out?: [x,y]}], closed?: bool, d?: SVG path data} → {id}",
+            "{anchors: [{x, y, in?: [x,y], out?: [x,y]}], closed?: bool, d?: SVG path data, bboxAngle?: deg (its bounding box's angle, as drawn along a Constrain Angle)} → {id}",
             has_doc,
             path_create
         ),
@@ -220,7 +220,7 @@ pub fn constrain_click(s: &Session, cmd: &str, mut params: Value) -> Value {
             o.insert("y".into(), json!(c.y - h / 2.0));
             o.insert("rotation".into(), json!(rotation));
         }
-        "shape.polygon" | "shape.star" => {
+        "shape.polygon" | "shape.star" | "shape.spiral" | "shape.flare" => {
             o.insert("rotation".into(), json!(rotation));
         }
         _ => {}
@@ -313,11 +313,14 @@ fn flare(s: &mut Session, p: &Value) -> Result<Value> {
     let ray_fuzz = pct("rayFuzziness", 100.0).min(1.0);
     let rings = p.get("rings").and_then(Value::as_u64).unwrap_or(10).min(50) as usize;
     let largest = pct("largest", 50.0);
+    // Drawn along a Constrain Angle: the rays and the rings' direction turn about the centre.
+    let rotation = rotation_param(p, "shape.flare")?;
     let end = match (p.get("x2").and_then(Value::as_f64), p.get("y2").and_then(Value::as_f64)) {
         (Some(x), Some(y)) => Point::new(x, y),
         _ => {
             let a = f64_or(p, "direction", 45.0).to_radians();
-            c + vectorcraft_geom::Vec2::new(a.cos(), -a.sin()) * f64_or(p, "pathLength", 300.0)
+            let end = c + vectorcraft_geom::Vec2::new(a.cos(), -a.sin()) * f64_or(p, "pathLength", 300.0);
+            turned_point(end, c, rotation)
         }
     };
     // Deterministic pseudo-random sizes (same parameters → same flare).
@@ -357,7 +360,8 @@ fn flare(s: &mut Session, p: &Value) -> Result<Value> {
             bp.line_to(c - dir * (w * 4.0));
             bp.close_path();
         }
-        parts.push(("Rays", PathData::from_bezpath(&bp), radial(c, reach, vec![stop(0.0, 0.9), stop(0.25, 0.35), stop(1.0, 0.0)]), 1.0));
+        let rays = turned_about(PathData::from_bezpath(&bp), c, rotation);
+        parts.push(("Rays", rays, radial(c, reach, vec![stop(0.0, 0.9), stop(0.25, 0.35), stop(1.0, 0.0)]), 1.0));
     }
     // Centre: bright core fading to transparent.
     parts.push(("Center", circle(c, r), radial(c, r, vec![stop(0.0, 1.0), stop(0.25 + brightness * 0.5, 0.6), stop(1.0, 0.0)]), opacity));
@@ -375,6 +379,7 @@ fn flare(s: &mut Session, p: &Value) -> Result<Value> {
         parts.push(("Ring", circle(at, rr), radial(at, rr, stops), 1.0));
     }
     let parent = s.doc()?.target_parent()?;
+    let bbox_angle = bbox_turn(rotation);
     let id = s.edit("Flare", |d, sel| {
         let children = parts
             .into_iter()
@@ -383,12 +388,14 @@ fn flare(s: &mut Session, p: &Value) -> Result<Value> {
                 n.name = Some(name.into());
                 n.blend = BlendMode::Screen;
                 n.opacity = op;
+                n.bbox_angle = bbox_angle;
                 std::sync::Arc::new(n)
             })
             .collect();
         let gid = d.alloc_id();
         let mut g = Node::group(gid, children);
         g.name = Some("Flare".into());
+        g.bbox_angle = bbox_angle;
         d.insert(parent, usize::MAX, g)?;
         sel.set([gid]);
         Ok(gid)
@@ -418,25 +425,77 @@ fn spiral(s: &mut Session, p: &Value) -> Result<Value> {
         p.get("segments").and_then(Value::as_u64).unwrap_or(10).clamp(2, 1000) as u32,
         bool_or(p, "clockwise", true),
     );
-    add_art(s, "Spiral", path_kind(path, None), None)
+    // Drawn along a Constrain Angle: turned about its centre.
+    let rotation = rotation_param(p, "shape.spiral")?;
+    let path = turned_about(path, c, rotation);
+    add_art_turned(s, "Spiral", path_kind(path, None), rotation)
+}
+
+/// The `rotation` param of `cmd` (degrees, clockwise on the page): 0 without it; not a finite
+/// number fails.
+fn rotation_param(p: &Value, cmd: &str) -> Result<f64> {
+    let rotation = if p.get("rotation").is_some() { f64_req(p, "rotation", cmd)? } else { 0.0 };
+    if !rotation.is_finite() {
+        return Err(bad(cmd, "rotation must be finite"));
+    }
+    Ok(rotation)
+}
+
+/// `q` turned by `rotation` (degrees) about `c`; as it is at 0.
+fn turned_point(q: Point, c: Point, rotation: f64) -> Point {
+    if rotation == 0.0 { q } else { c + (vectorcraft_geom::rotate_deg(rotation) * (q - c).to_point()).to_vec2() }
+}
+
+/// `path` turned by `rotation` (degrees) about `c`; as it is at 0.
+fn turned_about(mut path: PathData, c: Point, rotation: f64) -> PathData {
+    if rotation != 0.0 {
+        path.transform(Affine::translate(c.to_vec2()) * vectorcraft_geom::rotate_deg(rotation) * Affine::translate(-c.to_vec2()));
+    }
+    path
 }
 
 fn arc(s: &mut Session, p: &Value) -> Result<Value> {
     let a = Point::new(f64_req(p, "x1", "shape.arc")?, f64_req(p, "y1", "shape.arc")?);
     let b = Point::new(f64_req(p, "x2", "shape.arc")?, f64_req(p, "y2", "shape.arc")?);
-    add_art(s, "Arc", path_kind(shapes::arc(a, b, 0.0, bool_or(p, "closed", false)), None), None)
+    let closed = bool_or(p, "closed", false);
+    let rotation = rotation_param(p, "shape.arc")?;
+    if rotation == 0.0 {
+        return add_art(s, "Arc", path_kind(shapes::arc(a, b, 0.0, closed), None), None);
+    }
+    // Along a Constrain Angle: the arc between the same ends, bowing along the turned axes.
+    let turn = vectorcraft_geom::rotate_deg(rotation);
+    let local = a + (turn.inverse() * (b - a).to_point()).to_vec2();
+    let mut path = turned_about(shapes::arc(a, local, 0.0, closed), a, rotation);
+    // Its end exactly where it was asked to be.
+    if let Some(end) = path.subpaths.first_mut().and_then(|sp| sp.anchors.get_mut(1)) {
+        let d = b - end.p;
+        end.p = b;
+        end.h_in += d;
+        end.h_out = b;
+    }
+    add_art_turned(s, "Arc", path_kind(path, None), rotation)
 }
 
-fn grid_group(s: &mut Session, label: &str, (paths, bbox_angle): (Vec<PathData>, f64)) -> Result<Value> {
+/// A grid's paths as a new group, stroked with the current stroke and filled with the current
+/// fill when `fill` (Fill Grid), else with none; the path `even_odd` names (by index) fills
+/// even-odd (a polar grid's compound path of ellipses).
+fn grid_group(s: &mut Session, label: &str, (paths, bbox_angle): (Vec<PathData>, f64), fill: bool, even_odd: Option<usize>) -> Result<Value> {
     let parent = s.doc()?.target_parent()?;
-    let look = s.new_art_look(vectorcraft_color::Paint::None, s.paint.stroke.clone(), s.paint.stroke_width);
+    let paint = if fill { s.paint.fill.clone() } else { vectorcraft_color::Paint::None };
+    let look = s.new_art_look(paint, s.paint.stroke.clone(), s.paint.stroke_width);
     let id = s.edit(label, |d, sel| {
         let children = paths
             .into_iter()
-            .map(|pd| {
+            .enumerate()
+            .map(|(i, pd)| {
                 let mut n = Node::path(d.alloc_id(), pd, Appearance::default());
                 look.apply(d, &mut n);
                 n.bbox_angle = bbox_angle;
+                if even_odd == Some(i)
+                    && let NodeKind::Path { rule, .. } = &mut n.kind
+                {
+                    *rule = FillRule::EvenOdd;
+                }
                 std::sync::Arc::new(n)
             })
             .collect();
@@ -454,23 +513,38 @@ fn rect_grid(s: &mut Session, p: &Value) -> Result<Value> {
     let r = rect_of(p, "shape.rectangularGrid")?;
     let rows = p.get("rows").and_then(Value::as_u64).unwrap_or(5).min(999) as u32;
     let cols = p.get("columns").and_then(Value::as_u64).unwrap_or(5).min(999) as u32;
-    grid_group(s, "Rectangular Grid", turned_grid(p, r, shapes::rectangular_grid(r, rows, cols, true), "shape.rectangularGrid")?)
+    let (row_skew, col_skew) = (grid_skew(p, "rowSkew"), grid_skew(p, "columnSkew"));
+    let paths = shapes::rectangular_grid_skewed(r, (rows, row_skew), (cols, col_skew), bool_or(p, "frame", true));
+    grid_group(s, "Rectangular Grid", turned_grid(p, r, paths, "shape.rectangularGrid")?, bool_or(p, "fill", false), None)
+}
+
+/// A grid's Skew param `key` (%): 0 without it, within the most a Skew takes either way.
+fn grid_skew(p: &Value, key: &str) -> f64 {
+    let max = shapes::MAX_GRID_SKEW;
+    f64_or(p, key, 0.0).clamp(-max, max)
 }
 
 fn polar_grid(s: &mut Session, p: &Value) -> Result<Value> {
     let r = rect_of(p, "shape.polarGrid")?;
     let c = p.get("concentric").and_then(Value::as_u64).unwrap_or(5).min(999) as u32;
     let rad = p.get("radial").and_then(Value::as_u64).unwrap_or(5).min(999) as u32;
-    grid_group(s, "Polar Grid", turned_grid(p, r, shapes::polar_grid(r, c, rad), "shape.polarGrid")?)
+    let (mut paths, mut dividers) = shapes::polar_grid_skewed(r, (c, grid_skew(p, "concentricSkew")), (rad, grid_skew(p, "radialSkew")));
+    // Create Compound Path From Ellipses: one compound path of them all, filled even-odd, so
+    // every other ring is filled.
+    let compound = bool_or(p, "compound", false);
+    if compound {
+        let mut rings = PathData::default();
+        rings.subpaths = paths.drain(..).flat_map(|pd| pd.subpaths).collect();
+        paths.push(rings);
+    }
+    paths.append(&mut dividers);
+    grid_group(s, "Polar Grid", turned_grid(p, r, paths, "shape.polarGrid")?, bool_or(p, "fill", false), compound.then_some(0))
 }
 
 /// A grid's paths in `r` turned by the `rotation` param about the centre of `r` (a grid drawn
 /// along a Constrain Angle), and their bounding-box angle; as they are without it or at 0.
 fn turned_grid(p: &Value, r: Rect, mut paths: Vec<PathData>, cmd: &str) -> Result<(Vec<PathData>, f64)> {
-    let rotation = if p.get("rotation").is_some() { f64_req(p, "rotation", cmd)? } else { 0.0 };
-    if !rotation.is_finite() {
-        return Err(bad(cmd, "rotation must be finite"));
-    }
+    let rotation = rotation_param(p, cmd)?;
     if rotation != 0.0 {
         let c = r.center().to_vec2();
         let m = Affine::translate(c) * vectorcraft_geom::rotate_deg(rotation) * Affine::translate(-c);
@@ -524,7 +598,12 @@ fn path_create(s: &mut Session, p: &Value) -> Result<Value> {
     if !path.is_closed() && ap.stroke_paint().is_none() && ap.fill_paint().is_none() {
         ap.set_stroke(vectorcraft_color::Paint::solid(vectorcraft_color::Color::BLACK));
     }
-    add_look(s, "Pen", path_kind(path, None), look, None)
+    // A Pen path drawn along a Constrain Angle: its bounding box turns with the axes.
+    let bbox_angle = if p.get("bboxAngle").is_some() { f64_req(p, "bboxAngle", "path.create")? } else { 0.0 };
+    if !bbox_angle.is_finite() {
+        return Err(bad("path.create", "bboxAngle must be finite"));
+    }
+    add_look_turned(s, "Pen", path_kind(path, None), look, None, bbox_turn(-bbox_angle))
 }
 
 fn text_create(s: &mut Session, p: &Value) -> Result<Value> {

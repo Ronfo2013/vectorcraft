@@ -36,6 +36,11 @@ pub fn open_tool_dialog(app: &mut VectorcraftApp, kind: &str, p: Value) {
             super::flare_options::open(app, Some(vectorcraft_geom::Point::new(x, y)));
             return;
         }
+        // A grid tool click: its Tool Options, with the tool's values; OK draws a grid there.
+        "rectangularGrid" | "polarGrid" => {
+            super::grid_options::open(app, kind, Some(vectorcraft_geom::Point::new(x, y)));
+            return;
+        }
         "rotate" | "reflect" | "scale" | "shear" | "artboardOptions" => {
             let mut base = match kind {
                 "rotate" => json!({"angle": 0}),

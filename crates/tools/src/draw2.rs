@@ -16,7 +16,7 @@ use crate::{Action, Tool, ToolContext};
 
 pub use anchor::AnchorTool;
 pub use curvature::{CurvatureTool, EndCurve, curvature_close, curvature_extend, curvature_insert, curvature_move};
-pub use family::FamilyTool;
+pub use family::{FamilyTool, MAX_GRID_SIZE};
 pub use gesture::GestureTool;
 
 /// Colour of tool feedback (Illustrator's selection blue).

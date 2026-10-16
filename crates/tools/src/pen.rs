@@ -22,7 +22,7 @@
 //! through the last anchor; with Shift held it slides along its 45° step into line. Hovering shows
 //! where the next one would go.
 
-use serde_json::json;
+use serde_json::{Value, json};
 use vectorcraft_doc::{NodeId, NodeKind};
 use vectorcraft_geom::{BezPath, Point};
 
@@ -122,6 +122,16 @@ fn alt_converts(cx: &ToolContext, p: Point, m: Mods) -> bool {
             || crate::draw2::segment_in(cx, editable_paths(cx), p, cx.pick_tol()).is_some())
 }
 
+/// `path.create`'s params for a new Pen path of `anchors`: drawn along General › Constrain Angle
+/// (not 0° or a whole turn), its bounding box turns with the axes, as the shape tools' do.
+fn new_path(cx: &ToolContext, anchors: Value) -> Value {
+    let mut v = json!({ "anchors": anchors });
+    if vectorcraft_geom::constrain_axes(cx.constrain_angle).is_some() {
+        v["bboxAngle"] = json!(vectorcraft_geom::normalize_deg(cx.constrain_angle));
+    }
+    v
+}
+
 /// Preview the outgoing handle of anchor `ai` of subpath `si` at `h`, the incoming one left alone.
 fn set_out_handle(id: NodeId, si: usize, ai: usize, h: Point) -> Action {
     Action::Preview(
@@ -219,7 +229,7 @@ impl Tool for PenTool {
                 }
                 (self.drawing, self.path) = (true, None);
                 self.drag = Some(Place { at: p, path: None, closing: false });
-                vec![Action::Begin("Pen".into()), Action::Preview("path.create".into(), json!({"anchors": [{"x": p.x, "y": p.y}]}))]
+                vec![Action::Begin("Pen".into()), Action::Preview("path.create".into(), new_path(cx, json!([{"x": p.x, "y": p.y}])))]
             }
             PointerKind::Drag => {
                 if let Some(t) = &mut self.convert {
@@ -251,7 +261,7 @@ impl Tool for PenTool {
                     let in_h = a - (out_h - a);
                     return vec![Action::Preview(
                         "path.create".into(),
-                        json!({"anchors": [{"x": a.x, "y": a.y, "out": [out_h.x, out_h.y], "in": [in_h.x, in_h.y]}]}),
+                        new_path(cx, json!([{"x": a.x, "y": a.y, "out": [out_h.x, out_h.y], "in": [in_h.x, in_h.y]}])),
                     )];
                 };
                 if closing {

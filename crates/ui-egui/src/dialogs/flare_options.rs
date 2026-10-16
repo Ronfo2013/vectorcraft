@@ -118,7 +118,11 @@ fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> DialogResult {
     let params = flare_params(&options, at);
     match vectorcraft_engine::perspective_click(&app.session, "shape.flare", &params, at) {
         Some((id, p)) => app.run(&id, p),
-        None => app.run("shape.flare", params),
+        // Else along General › Constrain Angle: its rays and rings' direction turn with it.
+        None => {
+            let params = vectorcraft_engine::constrain_click(&app.session, "shape.flare", params);
+            app.run("shape.flare", params)
+        }
     }
 }
 

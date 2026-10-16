@@ -312,7 +312,8 @@ fn flyout_press(ui: &Ui, resp: &egui::Response, rect: egui::Rect) -> Option<Flyo
 /// Open a tool's options (`tool.options`, a double-click on its button): the Gradient tool's are
 /// the Gradient panel, the Eyedropper's the Eyedropper Options dialog, a Liquify tool's its Tool
 /// Options dialog, the Blend tool's Blend
-/// Options; the Print Tiling tool's resets the print tiling. As in the reference app, the Hand
+/// Options, the Flare and grid tools' their Tool Options; the Print Tiling tool's resets the print
+/// tiling. As in the reference app, the Hand
 /// tool's fits the artboard in the window, the Zoom tool's shows it at 100%, the Rotate, Scale,
 /// Reflect and Shear tools' are their Object › Transform dialogs, the selection tools' are the
 /// Move dialog, and the Pencil, Paintbrush, Smooth, Blob Brush and Eraser tools' are their Tool
@@ -348,6 +349,8 @@ pub fn open_options(app: &mut VectorcraftApp, tool: &str) -> Result<serde_json::
         }
         // The Flare tool: its options, which draw the next flare (OK draws none).
         "flare" => Ok(crate::dialogs::flare_options::open(app, None)),
+        // The grid tools: their Tool Options, which draw the next grid (OK draws none).
+        "rectangularGrid" | "polarGrid" => crate::dialogs::grid_options::open(app, tool, None).ok_or_else(|| format!("the {tool} tool has no options")),
         // A double click on the Print Tiling tool puts the pages back where the placement puts them.
         "printTiling" => app.run("print.tiling.set", json!({ "reset": true })),
         // The Liquify tools: their Tool Options (the Global Brush Dimensions and the tool's own).

@@ -27,8 +27,23 @@ pub struct FamilyTool {
     pub rows: u32,
     /// Columns / radial dividers.
     pub columns: u32,
+    /// The grids' Skew (%): horizontal / concentric dividers, vertical / radial ones.
+    pub row_skew: f64,
+    pub column_skew: f64,
+    /// Rectangular Grid: Use Outside Rectangle As Frame.
+    pub frame: bool,
+    /// Polar Grid: Create Compound Path From Ellipses.
+    pub compound: bool,
+    /// The grids' Fill Grid.
+    pub fill: bool,
+    /// The grids' Default Size, which a click (its options dialog) starts from.
+    pub width: f64,
+    pub height: f64,
     snap: DrawSnap,
 }
+
+/// The longest side a grid tool's Default Size takes, in points.
+pub const MAX_GRID_SIZE: f64 = 100_000.0;
 
 impl FamilyTool {
     pub fn new(id: &str) -> Self {
@@ -50,6 +65,13 @@ impl FamilyTool {
             clockwise: true,
             rows: 5,
             columns: 5,
+            row_skew: 0.0,
+            column_skew: 0.0,
+            frame: true,
+            compound: false,
+            fill: false,
+            width: 100.0,
+            height: 100.0,
             snap: DrawSnap::default(),
         }
     }
@@ -67,7 +89,8 @@ impl FamilyTool {
     /// the grids' corner keeps to a diagonal with Shift (a grid's square is taken along the
     /// Constrain Angle's axes instead when it turns them, [`Self::command_at`]).
     fn leave(&self, cx: &ToolContext, start: Point, m: Mods) -> Option<Leave> {
-        let turned = self.is_grid() && vectorcraft_geom::constrain_axes(cx.constrain_angle).is_some();
+        // The arc's square is taken along the turned axes too.
+        let turned = vectorcraft_geom::constrain_axes(cx.constrain_angle).is_some();
         (self.id != "spiral").then(|| Leave::diagonal(start, m.shift && !turned))
     }
 
@@ -81,33 +104,67 @@ impl FamilyTool {
     }
 
     /// [`Self::command`] with General › Constrain Angle `base` (degrees, counter-clockwise): the
-    /// grids are drawn along the x and y axes turned by it, as the rectangle is.
+    /// grids and the arc are drawn along the x and y axes turned by it, as the rectangle is (the
+    /// arc's Shift square too), and the spiral turned by it; at 0° and whole turns as without it.
     pub fn command_at(&self, start: Point, p: Point, m: Mods, base: f64) -> (String, Value) {
+        let rotation = vectorcraft_geom::constrain_rotation(base);
         match self.id {
             "spiral" => {
                 let r = p.distance(start).max(0.01);
-                (
-                    "shape.spiral".into(),
-                    json!({"cx": start.x, "cy": start.y, "radius": r, "decay": self.decay, "segments": self.segments, "clockwise": self.clockwise}),
-                )
+                let mut v = json!({"cx": start.x, "cy": start.y, "radius": r, "decay": self.decay, "segments": self.segments, "clockwise": self.clockwise});
+                if let Some(rotation) = rotation {
+                    v["rotation"] = json!(rotation);
+                }
+                ("shape.spiral".into(), v)
             }
-            "rectangularGrid" => {
+            "rectangularGrid" | "polarGrid" => {
                 let mut v = box_params(start, p, m, base);
-                v["rows"] = json!(self.rows);
-                v["columns"] = json!(self.columns);
-                ("shape.rectangularGrid".into(), v)
-            }
-            "polarGrid" => {
-                let mut v = box_params(start, p, m, base);
-                v["concentric"] = json!(self.rows);
-                v["radial"] = json!(self.columns);
-                ("shape.polarGrid".into(), v)
+                self.grid_options_into(&mut v);
+                (format!("shape.{}", self.id), v)
             }
             _ => {
-                let d = if m.shift { square(p - start) } else { p - start };
+                let d = match vectorcraft_geom::constrain_axes(base) {
+                    None if m.shift => square(p - start),
+                    None => p - start,
+                    // Measured along the turned axes, squared there with Shift.
+                    Some(axes) => {
+                        let local = (axes.inverse() * (p - start).to_point()).to_vec2();
+                        let local = if m.shift { square(local) } else { local };
+                        (axes * local.to_point()).to_vec2()
+                    }
+                };
                 let (a, b) = if m.alt { (start - d, start + d) } else { (start, start + d) };
-                ("shape.arc".into(), json!({"x1": a.x, "y1": a.y, "x2": b.x, "y2": b.y, "closed": self.closed}))
+                let mut v = json!({"x1": a.x, "y1": a.y, "x2": b.x, "y2": b.y, "closed": self.closed});
+                if let Some(rotation) = rotation {
+                    v["rotation"] = json!(rotation);
+                }
+                ("shape.arc".into(), v)
             }
+        }
+    }
+
+    /// The grid options into a grid command's params `v`: the divider counts, and the skews,
+    /// frame, compound path and fill where they differ from the defaults.
+    pub fn grid_options_into(&self, v: &mut Value) {
+        let polar = self.id == "polarGrid";
+        let (rows, cols, row_skew, col_skew) =
+            if polar { ("concentric", "radial", "concentricSkew", "radialSkew") } else { ("rows", "columns", "rowSkew", "columnSkew") };
+        v[rows] = json!(self.rows);
+        v[cols] = json!(self.columns);
+        if self.row_skew != 0.0 {
+            v[row_skew] = json!(self.row_skew);
+        }
+        if self.column_skew != 0.0 {
+            v[col_skew] = json!(self.column_skew);
+        }
+        if !polar && !self.frame {
+            v["frame"] = json!(false);
+        }
+        if polar && self.compound {
+            v["compound"] = json!(true);
+        }
+        if self.fill {
+            v["fill"] = json!(true);
         }
     }
 }
@@ -217,8 +274,14 @@ impl Tool for FamilyTool {
     fn options(&self) -> Value {
         match self.id {
             "spiral" => json!({"decay": self.decay, "segments": self.segments, "clockwise": self.clockwise}),
-            "rectangularGrid" => json!({"rows": self.rows, "columns": self.columns}),
-            "polarGrid" => json!({"concentric": self.rows, "radial": self.columns}),
+            "rectangularGrid" => json!({
+                "rows": self.rows, "columns": self.columns, "rowSkew": self.row_skew, "columnSkew": self.column_skew,
+                "frame": self.frame, "fill": self.fill, "width": self.width, "height": self.height,
+            }),
+            "polarGrid" => json!({
+                "concentric": self.rows, "radial": self.columns, "concentricSkew": self.row_skew, "radialSkew": self.column_skew,
+                "compound": self.compound, "fill": self.fill, "width": self.width, "height": self.height,
+            }),
             _ => json!({"closed": self.closed}),
         }
     }
@@ -230,6 +293,27 @@ impl Tool for FamilyTool {
             "clockwise" => self.clockwise = v.as_bool().unwrap_or(self.clockwise),
             "rows" | "concentric" => self.rows = v.as_u64().unwrap_or(5).min(999) as u32,
             "columns" | "radial" => self.columns = v.as_u64().unwrap_or(5).min(999) as u32,
+            "rowSkew" | "concentricSkew" | "columnSkew" | "radialSkew" => {
+                let max = vectorcraft_geom::shapes::MAX_GRID_SKEW;
+                let Some(x) = v.as_f64().filter(|x| x.is_finite()) else { return };
+                if matches!(key, "rowSkew" | "concentricSkew") {
+                    self.row_skew = x.clamp(-max, max);
+                } else {
+                    self.column_skew = x.clamp(-max, max);
+                }
+            }
+            "frame" => self.frame = v.as_bool().unwrap_or(self.frame),
+            "compound" => self.compound = v.as_bool().unwrap_or(self.compound),
+            "fill" => self.fill = v.as_bool().unwrap_or(self.fill),
+            "width" | "height" => {
+                let Some(x) = v.as_f64().filter(|x| x.is_finite()) else { return };
+                let x = x.clamp(0.0, MAX_GRID_SIZE);
+                if key == "width" {
+                    self.width = x;
+                } else {
+                    self.height = x;
+                }
+            }
             _ => {}
         }
     }

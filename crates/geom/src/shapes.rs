@@ -210,37 +210,91 @@ pub fn spiral(center: Point, radius: f64, decay_percent: f64, segments: u32, clo
 
 /// Rectangular grid as separate open lines (plus an optional frame rectangle).
 pub fn rectangular_grid(r: Rect, h_dividers: u32, v_dividers: u32, frame: bool) -> Vec<PathData> {
+    rectangular_grid_skewed(r, (h_dividers, 0.0), (v_dividers, 0.0), frame)
+}
+
+/// The most a grid tool's Skew weights its dividers, in percent either way.
+pub const MAX_GRID_SKEW: f64 = 500.0;
+
+/// The share `u` (0–1) of a run whose dividers are weighted by `skew` (%, as the grid tools'
+/// Skew): a positive one bunches them towards 0, a negative one towards 1; exactly `u` at 0.
+/// Skews count within ±[`MAX_GRID_SKEW`], a non-finite one as 0.
+pub fn skewed(u: f64, skew: f64) -> f64 {
+    if skew == 0.0 || !skew.is_finite() {
+        return u;
+    }
+    let k = 1.0 + skew.abs().min(MAX_GRID_SKEW) / 100.0;
+    if skew > 0.0 { u.powf(k) } else { 1.0 - (1.0 - u).powf(k) }
+}
+
+/// Rectangular grid: `(count, skew)` horizontal and vertical dividers as separate open lines,
+/// the horizontal ones weighted towards the top by a positive skew and the vertical ones towards
+/// the right ([`skewed`]); the outside one rectangle with `frame` (Use Outside Rectangle As
+/// Frame), else four more lines (top, bottom, left, right). At skews of 0 the dividers are evenly
+/// spaced, exactly as without them.
+pub fn rectangular_grid_skewed(r: Rect, (h_dividers, h_skew): (u32, f64), (v_dividers, v_skew): (u32, f64), frame: bool) -> Vec<PathData> {
     let r = r.abs();
     let mut out = Vec::new();
     for i in 1..=h_dividers {
-        let y = r.y0 + r.height() * i as f64 / (h_dividers + 1) as f64;
+        let y = if h_skew == 0.0 {
+            r.y0 + r.height() * i as f64 / (h_dividers + 1) as f64
+        } else {
+            r.y0 + r.height() * skewed(i as f64 / (h_dividers + 1) as f64, h_skew)
+        };
         out.push(line(Point::new(r.x0, y), Point::new(r.x1, y)));
     }
     for i in 1..=v_dividers {
-        let x = r.x0 + r.width() * i as f64 / (v_dividers + 1) as f64;
+        let x = if v_skew == 0.0 {
+            r.x0 + r.width() * i as f64 / (v_dividers + 1) as f64
+        } else {
+            r.x0 + r.width() * skewed(i as f64 / (v_dividers + 1) as f64, -v_skew)
+        };
         out.push(line(Point::new(x, r.y0), Point::new(x, r.y1)));
     }
     if frame {
         out.push(rectangle(r));
+    } else {
+        out.push(line(Point::new(r.x0, r.y0), Point::new(r.x1, r.y0)));
+        out.push(line(Point::new(r.x0, r.y1), Point::new(r.x1, r.y1)));
+        out.push(line(Point::new(r.x0, r.y0), Point::new(r.x0, r.y1)));
+        out.push(line(Point::new(r.x1, r.y0), Point::new(r.x1, r.y1)));
     }
     out
 }
 
 /// Polar grid: concentric ellipses plus radial dividers.
 pub fn polar_grid(r: Rect, concentric: u32, radial: u32) -> Vec<PathData> {
+    let (mut out, mut dividers) = polar_grid_skewed(r, (concentric, 0.0), (radial, 0.0));
+    out.append(&mut dividers);
+    out
+}
+
+/// Polar grid as (ellipses, radial dividers): `concentric` dividers and the outside as
+/// ellipses, inner to outer, weighted outwards by a positive skew; `radial` dividers as lines
+/// from the centre, from 12 o'clock round, weighted towards 12 o'clock by a positive skew
+/// ([`skewed`], folded either side of it). At skews of 0 exactly as without them.
+pub fn polar_grid_skewed(r: Rect, (concentric, c_skew): (u32, f64), (radial, r_skew): (u32, f64)) -> (Vec<PathData>, Vec<PathData>) {
     let r = r.abs();
     let c = r.center();
-    let mut out = Vec::new();
+    let mut ellipses = Vec::new();
     for i in 1..=concentric + 1 {
         let f = i as f64 / (concentric + 1) as f64;
-        out.push(ellipse(Rect::from_center_size(c, (r.width() * f, r.height() * f))));
+        let f = if c_skew == 0.0 { f } else { skewed(f, -c_skew) };
+        ellipses.push(ellipse(Rect::from_center_size(c, (r.width() * f, r.height() * f))));
     }
+    let mut dividers = Vec::new();
     // No dividers at 0 (the loop never divides by it).
     for i in 0..radial {
-        let a = -PI / 2.0 + TAU * i as f64 / radial as f64;
-        out.push(line(c, Point::new(c.x + r.width() / 2.0 * a.cos(), c.y + r.height() / 2.0 * a.sin())));
+        let a = if r_skew == 0.0 {
+            -PI / 2.0 + TAU * i as f64 / radial as f64
+        } else {
+            let phi = TAU * i as f64 / radial as f64;
+            let phi = if phi <= PI { PI * skewed(phi / PI, r_skew) } else { TAU - PI * skewed((TAU - phi) / PI, r_skew) };
+            -PI / 2.0 + phi
+        };
+        dividers.push(line(c, Point::new(c.x + r.width() / 2.0 * a.cos(), c.y + r.height() / 2.0 * a.sin())));
     }
-    out
+    (ellipses, dividers)
 }
 
 #[cfg(test)]
@@ -254,6 +308,29 @@ mod tests {
 
     /// A pie is the arc from its start to its end angle, counterclockwise on screen, closed through
     /// the centre; a whole turn (or none) is the ellipse.
+    /// Skewed grids: at 0 as before; a positive skew weights the horizontal dividers towards the
+    /// top, the vertical ones towards the right, the ellipses outwards and the radial dividers
+    /// towards 12 o'clock; without a frame the outside is four lines.
+    #[test]
+    fn skewed_grids() {
+        let r = Rect::new(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(skewed(0.5, 0.0), 0.5);
+        assert_eq!(skewed(0.25, f64::NAN), 0.25);
+        let first = |p: &PathData| p.subpaths[0].anchors[0].p;
+        let g = rectangular_grid_skewed(r, (3, 100.0), (3, 100.0), false);
+        assert_eq!(g.len(), 3 + 3 + 4);
+        assert!(first(&g[0]).y < 25.0 && first(&g[2]).y < 75.0, "towards the top");
+        assert!(first(&g[3]).x > 25.0 && first(&g[5]).x > 75.0, "towards the right");
+        assert!(g[6..].iter().all(|p| !p.is_closed()));
+        let (e, _) = polar_grid_skewed(r, (3, 0.0), (4, 0.0));
+        let (e2, d2) = polar_grid_skewed(r, (3, 200.0), (4, 200.0));
+        let w = |p: &PathData| p.bounds().map_or(0.0, |b| b.width());
+        assert!(w(&e2[0]) > w(&e[0]) && (w(&e2[3]) - 100.0).abs() < 1e-9, "outwards, the outside kept");
+        let end = |p: &PathData| p.subpaths[0].anchors[1].p;
+        assert!(end(&d2[0]).distance(Point::new(50.0, 0.0)) < 1e-9);
+        assert!(end(&d2[1]).y < 50.0 && end(&d2[3]).y < 50.0 && end(&d2[1]).x > 50.0 && end(&d2[3]).x < 50.0, "towards 12 o'clock");
+    }
+
     #[test]
     fn a_pie_is_its_arc_closed_through_the_centre() {
         let r = Rect::new(0.0, 0.0, 200.0, 100.0);
